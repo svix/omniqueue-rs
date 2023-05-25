@@ -1,0 +1,37 @@
+[package]
+name = "omniqueue"
+version = "0.1.0"
+description = "An abstraction layer over various queue backends"
+authors = ["Svix Inc. <oss@svix.com>"]
+repository = "https://github.com/svix/omniqueue-rs/"
+readme = "../README.md"
+
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+aws-config = { version = "0.55", optional = true }
+aws-sdk-sqs = { version = "0.25", optional = true }
+bb8 = { version = "0.7.1", optional = true }
+bb8-redis = { version = "0.10.1", optional = true }
+futures = { version = "0.3", default-features = false, features = ["async-await", "std"] }
+lapin = { version = "2", optional = true }
+rdkafka = { version = "0.29", features = ["cmake-build", "ssl", "tracing"] }
+redis = { version = "0.21.5", features = ["tokio-comp", "tokio-native-tls-comp", "streams"], optional = true }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+
+[dev-dependencies]
+fastrand = "1.9"
+tokio-executor-trait = "2.1"
+tokio-reactor-trait = "1.1"
+
+[features]
+default = ["memory_queue", "rabbitmq", "redis", "sqs"]
+memory_queue = []
+rabbitmq = ["dep:lapin"]
+redis = ["dep:bb8", "dep:bb8-redis", "dep:redis"]
+sqs = ["dep:aws-config", "dep:aws-sdk-sqs"]
