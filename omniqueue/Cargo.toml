@@ -1,6 +1,7 @@
 [package]
 name = "omniqueue"
 version = "0.1.0"
+license = "MIT"
 description = "An abstraction layer over various queue backends"
 authors = ["Svix Inc. <oss@svix.com>"]
 repository = "https://github.com/svix/omniqueue-rs/"
