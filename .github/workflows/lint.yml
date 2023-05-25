@@ -46,13 +46,17 @@ jobs:
         args: --manifest-path omniqueue/Cargo.toml --all -- --check
 
     - name: Start test dependencies
-      run: docker-coompose -f "./testing-docker-coompose.yml" up -d
+      run: docker-compose -f "./testing-docker-compose.yml" up -d
 
     - name: Run tests
       uses: actions-rs/cargo@v1
+      env:
+        AWS_DEFAULT_REGION: localhost
+        AWS_ACCESS_KEY_ID: x
+        AWS_SECRET_ACCESS_KEY: x
       with:
         command: test
         args: --manifest-path omniqueue/Cargo.toml --all --all-features
 
     - name: Stop test dependencies
-      run: docker-coompose -f "./testing-docker-coompose.yml" down
+      run: docker-compose -f "./testing-docker-compose.yml" down
