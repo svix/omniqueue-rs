@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)", srcset="./assets/banner_dark.png">
+  <source media="(prefers-color-scheme: light)", srcset="./assets/banner_light.png">
+  <img src="./assets/banner_light.png">
+</picture>
+
 # Omniqueue
 
 Omniqueue is an abstraction layer over queue backends for Rust. It includes support for RabbitMQ,
