@@ -30,7 +30,7 @@ While the exact configuration will depend on the backend used, usage is roughly 
    If you only need some backends, then simply disable the default features, and enable any backends
    that you require.
 
-2. Construct anud use your queue.
+2. Construct and use your queue.
 
    The exact configuration type used will depend on your backend, but it's as simple as:
 
@@ -95,7 +95,7 @@ let (p, mut c) = RabbitMqBackend::builder(cfg)
 	})
 	.with_decoder(|v: &Vec<u8>| -> Result<ExampleType, QueueError> {
 		Ok(ExampleType {
-			field: *v.first().unwrap_or(i&0),
+			field: *v.first().unwrap_or(&0),
 		})
 	})
 	.build_pair()
