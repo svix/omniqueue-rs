@@ -1,7 +1,8 @@
-use std::{any::TypeId, collections::HashMap};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 use async_trait::async_trait;
-use bb8_redis::RedisConnectionManager;
+use bb8::ManageConnection;
+use bb8_redis::RedisMultiplexedConnectionManager;
 use redis::streams::{StreamReadOptions, StreamReadReply};
 
 use crate::{
@@ -10,6 +11,30 @@ use crate::{
     queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
     QueueError,
 };
+
+mod cluster;
+use cluster::RedisClusterConnectionManager;
+
+pub trait RedisConnection
+where
+    Self: ManageConnection + Sized,
+    Self::Connection: redis::aio::ConnectionLike,
+    Self::Error: 'static + std::error::Error + Send + Sync,
+{
+    fn from_dsn(dsn: &str) -> Result<Self, QueueError>;
+}
+
+impl RedisConnection for RedisMultiplexedConnectionManager {
+    fn from_dsn(dsn: &str) -> Result<Self, QueueError> {
+        Self::new(dsn).map_err(QueueError::generic)
+    }
+}
+
+impl RedisConnection for RedisClusterConnectionManager {
+    fn from_dsn(dsn: &str) -> Result<Self, QueueError> {
+        Self::new(dsn).map_err(QueueError::generic)
+    }
+}
 
 pub struct RedisConfig {
     pub dsn: String,
@@ -21,25 +46,31 @@ pub struct RedisConfig {
     pub payload_key: String,
 }
 
-pub struct RedisQueueBackend;
+pub struct RedisQueueBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
+pub type RedisClusterQueueBackend = RedisQueueBackend<RedisClusterConnectionManager>;
 
 #[async_trait]
-impl QueueBackend for RedisQueueBackend {
+impl<R> QueueBackend for RedisQueueBackend<R>
+where
+    R: RedisConnection,
+    R::Connection: redis::aio::ConnectionLike + Send + Sync,
+    R::Error: 'static + std::error::Error + Send + Sync,
+{
     type Config = RedisConfig;
 
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = Vec<u8>;
     type PayloadOut = Vec<u8>;
 
-    type Producer = RedisStreamProducer;
-    type Consumer = RedisStreamConsumer;
+    type Producer = RedisStreamProducer<R>;
+    type Consumer = RedisStreamConsumer<R>;
 
     async fn new_pair(
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(RedisStreamProducer, RedisStreamConsumer), QueueError> {
-        let redis = RedisConnectionManager::new(cfg.dsn).map_err(QueueError::generic)?;
+    ) -> Result<(RedisStreamProducer<R>, RedisStreamConsumer<R>), QueueError> {
+        let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
             .build(redis)
@@ -67,8 +98,8 @@ impl QueueBackend for RedisQueueBackend {
     async fn producing_half(
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<RedisStreamProducer, QueueError> {
-        let redis = RedisConnectionManager::new(cfg.dsn).map_err(QueueError::generic)?;
+    ) -> Result<RedisStreamProducer<R>, QueueError> {
+        let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
             .build(redis)
@@ -86,8 +117,8 @@ impl QueueBackend for RedisQueueBackend {
     async fn consuming_half(
         cfg: RedisConfig,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<RedisStreamConsumer, QueueError> {
-        let redis = RedisConnectionManager::new(cfg.dsn).map_err(QueueError::generic)?;
+    ) -> Result<RedisStreamConsumer<R>, QueueError> {
+        let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
             .build(redis)
@@ -105,8 +136,8 @@ impl QueueBackend for RedisQueueBackend {
     }
 }
 
-pub struct RedisStreamAcker {
-    redis: bb8::Pool<RedisConnectionManager>,
+pub struct RedisStreamAcker<M: ManageConnection> {
+    redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
     entry_id: String,
@@ -115,7 +146,12 @@ pub struct RedisStreamAcker {
 }
 
 #[async_trait]
-impl Acker for RedisStreamAcker {
+impl<M> Acker for RedisStreamAcker<M>
+where
+    M: ManageConnection,
+    M::Connection: redis::aio::ConnectionLike + Send + Sync,
+    M::Error: 'static + std::error::Error + Send + Sync,
+{
     async fn ack(&mut self) -> Result<(), QueueError> {
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
@@ -143,15 +179,20 @@ impl Acker for RedisStreamAcker {
     }
 }
 
-pub struct RedisStreamProducer {
+pub struct RedisStreamProducer<M: ManageConnection> {
     registry: EncoderRegistry<Vec<u8>>,
-    redis: bb8::Pool<RedisConnectionManager>,
+    redis: bb8::Pool<M>,
     queue_key: String,
     payload_key: String,
 }
 
 #[async_trait]
-impl QueueProducer for RedisStreamProducer {
+impl<M> QueueProducer for RedisStreamProducer<M>
+where
+    M: ManageConnection,
+    M::Connection: redis::aio::ConnectionLike + Send + Sync,
+    M::Error: 'static + std::error::Error + Send + Sync,
+{
     type Payload = Vec<u8>;
 
     fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
@@ -169,9 +210,9 @@ impl QueueProducer for RedisStreamProducer {
     }
 }
 
-pub struct RedisStreamConsumer {
+pub struct RedisStreamConsumer<M: ManageConnection> {
     registry: DecoderRegistry<Vec<u8>>,
-    redis: bb8::Pool<RedisConnectionManager>,
+    redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
     consumer_name: String,
@@ -179,7 +220,12 @@ pub struct RedisStreamConsumer {
 }
 
 #[async_trait]
-impl QueueConsumer for RedisStreamConsumer {
+impl<M> QueueConsumer for RedisStreamConsumer<M>
+where
+    M: ManageConnection,
+    M::Connection: redis::aio::ConnectionLike + Send + Sync,
+    M::Error: 'static + std::error::Error + Send + Sync,
+{
     type Payload = Vec<u8>;
 
     async fn receive(&mut self) -> Result<Delivery, QueueError> {
