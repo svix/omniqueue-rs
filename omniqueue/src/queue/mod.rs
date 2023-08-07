@@ -81,7 +81,9 @@ impl Delivery {
     ///
     /// This method does not consume the payload.
     pub fn payload_custom<T: 'static>(&self) -> Result<Option<T>, QueueError> {
-        let Some(payload) = self.payload.as_ref() else { return Ok(None); };
+        let Some(payload) = self.payload.as_ref() else {
+            return Ok(None);
+        };
 
         let decoder = self
             .decoders
@@ -107,7 +109,9 @@ impl Delivery {
     }
 
     pub fn payload_serde_json<T: DeserializeOwned>(&self) -> Result<Option<T>, QueueError> {
-        let Some(bytes) = self.payload.as_ref() else { return Ok(None); };
+        let Some(bytes) = self.payload.as_ref() else {
+            return Ok(None);
+        };
         serde_json::from_slice(bytes).map_err(Into::into)
     }
 }
