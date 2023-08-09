@@ -72,3 +72,13 @@ services:
       REDIS_NODES: "redis-cluster redis-cluster-node-0 redis-cluster-node-1 redis-cluster-node-2 redis-cluster-node-3 redis-cluster-node-4"
     ports:
       - "6385:6379"
+
+  gcp-pubsub:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    ports:
+      - "8085:8085"
+    command: [
+      "gcloud", "beta", "emulators", "pubsub", "start",
+      "--project", "local-project",
+      "--host-port", "0.0.0.0:8085"
+    ]
