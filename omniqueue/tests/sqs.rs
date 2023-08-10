@@ -6,6 +6,11 @@ use omniqueue::{
 use serde::{Deserialize, Serialize};
 
 const ROOT_URL: &str = "http://localhost:9324";
+const DEFAULT_CFG: [(&str, &str); 3] = [
+    ("AWS_DEFAULT_REGION", "localhost"),
+    ("AWS_ACCESS_KEY_ID", "x"),
+    ("AWS_SECRET_ACCESS_KEY", "x"),
+];
 
 /// Returns a [`QueueBuilder`] configured to connect to the SQS instance spawned by the file
 /// `testing-docker-compose.yaml` in the root of the repository.
@@ -13,6 +18,12 @@ const ROOT_URL: &str = "http://localhost:9324";
 /// Additionally this will make a temporary queue on that instance for the duration of the test such
 /// as to ensure there is no stealing.w
 async fn make_test_queue() -> QueueBuilder<SqsQueueBackend, Static> {
+    for (var, val) in &DEFAULT_CFG {
+        if std::env::var(var).is_err() {
+            std::env::set_var(var, val);
+        }
+    }
+
     let config = aws_config::from_env().endpoint_url(ROOT_URL).load().await;
     let client = Client::new(&config);
 
