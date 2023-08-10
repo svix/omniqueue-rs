@@ -54,7 +54,7 @@ pub trait QueueBackend {
     }
 }
 
-/// The output of qll ueue backends
+/// The output of queue backends
 pub struct Delivery {
     pub(crate) payload: Option<Vec<u8>>,
 
@@ -73,7 +73,7 @@ impl Delivery {
     /// nature of this will vary by backend, but usually it ensures that the same message is either
     /// reinserted into the same queue or is sent to a separate collection.
     pub async fn nack(mut self) -> Result<(), QueueError> {
-        self.acker.ack().await
+        self.acker.nack().await
     }
 
     /// This method will deserialize the contained bytes using the configured decoder. If a decoder
