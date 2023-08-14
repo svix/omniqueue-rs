@@ -117,7 +117,7 @@ impl Delivery {
 }
 
 #[async_trait]
-pub trait Acker {
+pub trait Acker: Send + Sync {
     async fn ack(&mut self) -> Result<(), QueueError>;
     async fn nack(&mut self) -> Result<(), QueueError>;
 }

@@ -2,7 +2,7 @@ use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
-use bb8_redis::RedisMultiplexedConnectionManager;
+pub use bb8_redis::RedisMultiplexedConnectionManager;
 use redis::streams::{StreamReadOptions, StreamReadReply};
 
 use crate::{
