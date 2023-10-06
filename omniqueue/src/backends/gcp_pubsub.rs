@@ -15,6 +15,7 @@ use google_cloud_pubsub::subscription::Subscription;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use std::{any::TypeId, collections::HashMap};
 
 pub struct GcpPubSubBackend;
@@ -217,6 +218,25 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
     Ok(subscription)
 }
 
+impl GcpPubSubConsumer {
+    fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
+        // FIXME: would be nice to avoid having to move the data out here.
+        //   While it's possible to ack via a subscription and an ack_id, nack is only
+        //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
+        //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
+        let payload = recv_msg.message.data.drain(..).collect();
+
+        Delivery {
+            decoders: self.registry.clone(),
+            acker: Box::new(GcpPubSubAcker {
+                recv_msg,
+                subscription_id: self.subscription_id.clone(),
+            }),
+            payload: Some(payload),
+        }
+    }
+}
+
 #[async_trait]
 impl QueueConsumer for GcpPubSubConsumer {
     type Payload = Payload;
@@ -228,20 +248,26 @@ impl QueueConsumer for GcpPubSubConsumer {
             .await
             .map_err(QueueError::generic)?;
 
-        let mut recv_msg = stream.next().await.ok_or_else(|| QueueError::NoData)?;
-        // FIXME: would be nice to avoid having to move the data out here.
-        //   While it's possible to ack via a subscription and an ack_id, nack is only
-        //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
-        //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
-        let payload = recv_msg.message.data.drain(..).collect();
-        Ok(Delivery {
-            decoders: self.registry.clone(),
-            acker: Box::new(GcpPubSubAcker {
-                recv_msg,
-                subscription_id: self.subscription_id.clone(),
-            }),
-            payload: Some(payload),
-        })
+        let recv_msg = stream.next().await.ok_or_else(|| QueueError::NoData)?;
+
+        Ok(self.wrap_recv_msg(recv_msg))
+    }
+
+    async fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> Result<Vec<Delivery>, QueueError> {
+        let subscription = subscription(&self.client, &self.subscription_id).await?;
+        match tokio::time::timeout(deadline, subscription.pull(max_messages as _, None)).await {
+            Ok(messages) => Ok(messages
+                .map_err(QueueError::generic)?
+                .into_iter()
+                .map(|m| self.wrap_recv_msg(m))
+                .collect()),
+            // Timeout
+            Err(_) => Ok(vec![]),
+        }
     }
 }
 
