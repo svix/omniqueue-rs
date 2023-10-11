@@ -1,13 +1,17 @@
+use std::time::{Duration, Instant};
 use std::{any::TypeId, collections::HashMap};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use lapin::{acker::Acker as LapinAcker, Channel, Connection, Consumer};
-
+use futures_util::FutureExt;
 pub use lapin::{
-    options::{BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions},
+    acker::Acker as LapinAcker,
+    options::{
+        BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
+        BasicQosOptions,
+    },
     types::FieldTable,
-    BasicProperties, ConnectionProperties,
+    BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
 };
 
 use crate::{
@@ -17,6 +21,7 @@ use crate::{
     QueueError,
 };
 
+#[derive(Clone)]
 pub struct RabbitMqConfig {
     pub uri: String,
     pub connection_properties: ConnectionProperties,
@@ -24,17 +29,63 @@ pub struct RabbitMqConfig {
     pub publish_exchange: String,
     pub publish_routing_key: String,
     pub publish_options: BasicPublishOptions,
-    pub publish_properites: BasicProperties,
+    pub publish_properties: BasicProperties,
 
     pub consume_queue: String,
     pub consumer_tag: String,
     pub consume_options: BasicConsumeOptions,
     pub consume_arguments: FieldTable,
 
+    pub consume_prefetch_count: Option<u16>,
     pub requeue_on_nack: bool,
 }
 
 pub struct RabbitMqBackend;
+
+async fn consumer(
+    conn: &Connection,
+    cfg: RabbitMqConfig,
+    custom_decoders: DecoderRegistry<Vec<u8>>,
+) -> Result<RabbitMqConsumer, QueueError> {
+    let channel_rx = conn.create_channel().await.map_err(QueueError::generic)?;
+
+    if let Some(n) = cfg.consume_prefetch_count {
+        channel_rx
+            .basic_qos(n, BasicQosOptions::default())
+            .await
+            .map_err(QueueError::generic)?;
+    }
+
+    Ok(RabbitMqConsumer {
+        registry: custom_decoders,
+        consumer: channel_rx
+            .basic_consume(
+                &cfg.consume_queue,
+                &cfg.consumer_tag,
+                cfg.consume_options,
+                cfg.consume_arguments.clone(),
+            )
+            .await
+            .map_err(QueueError::generic)?,
+        requeue_on_nack: cfg.requeue_on_nack,
+    })
+}
+
+async fn producer(
+    conn: &Connection,
+    cfg: RabbitMqConfig,
+    custom_encoders: EncoderRegistry<Vec<u8>>,
+) -> Result<RabbitMqProducer, QueueError> {
+    let channel_tx = conn.create_channel().await.map_err(QueueError::generic)?;
+    Ok(RabbitMqProducer {
+        registry: custom_encoders,
+        channel: channel_tx,
+        exchange: cfg.publish_exchange.clone(),
+        routing_key: cfg.publish_routing_key.clone(),
+        options: cfg.publish_options,
+        properties: cfg.publish_properties.clone(),
+    })
+}
 
 #[async_trait]
 impl QueueBackend for RabbitMqBackend {
@@ -51,35 +102,13 @@ impl QueueBackend for RabbitMqBackend {
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
     ) -> Result<(RabbitMqProducer, RabbitMqConsumer), QueueError> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties)
+        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
             .map_err(QueueError::generic)?;
 
-        let channel_tx = conn.create_channel().await.map_err(QueueError::generic)?;
-        let channel_rx = conn.create_channel().await.map_err(QueueError::generic)?;
-
         Ok((
-            RabbitMqProducer {
-                registry: custom_encoders,
-                channel: channel_tx,
-                exchange: cfg.publish_exchange,
-                routing_key: cfg.publish_routing_key,
-                options: cfg.publish_options,
-                properties: cfg.publish_properites,
-            },
-            RabbitMqConsumer {
-                registry: custom_decoders,
-                consumer: channel_rx
-                    .basic_consume(
-                        &cfg.consume_queue,
-                        &cfg.consumer_tag,
-                        cfg.consume_options,
-                        cfg.consume_arguments,
-                    )
-                    .await
-                    .map_err(QueueError::generic)?,
-                requeue_on_nack: cfg.requeue_on_nack,
-            },
+            producer(&conn, cfg.clone(), custom_encoders).await?,
+            consumer(&conn, cfg.clone(), custom_decoders).await?,
         ))
     }
 
@@ -87,45 +116,22 @@ impl QueueBackend for RabbitMqBackend {
         cfg: RabbitMqConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
     ) -> Result<RabbitMqProducer, QueueError> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties)
+        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
             .map_err(QueueError::generic)?;
 
-        let channel_tx = conn.create_channel().await.map_err(QueueError::generic)?;
-
-        Ok(RabbitMqProducer {
-            registry: custom_encoders,
-            channel: channel_tx,
-            exchange: cfg.publish_exchange,
-            routing_key: cfg.publish_routing_key,
-            options: cfg.publish_options,
-            properties: cfg.publish_properites,
-        })
+        Ok(producer(&conn, cfg.clone(), custom_encoders).await?)
     }
 
     async fn consuming_half(
         cfg: RabbitMqConfig,
         custom_decoders: DecoderRegistry<Vec<u8>>,
     ) -> Result<RabbitMqConsumer, QueueError> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties)
+        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
             .map_err(QueueError::generic)?;
 
-        let channel_rx = conn.create_channel().await.map_err(QueueError::generic)?;
-
-        Ok(RabbitMqConsumer {
-            registry: custom_decoders,
-            consumer: channel_rx
-                .basic_consume(
-                    &cfg.consume_queue,
-                    &cfg.consumer_tag,
-                    cfg.consume_options,
-                    cfg.consume_arguments,
-                )
-                .await
-                .map_err(QueueError::generic)?,
-            requeue_on_nack: cfg.requeue_on_nack,
-        })
+        Ok(consumer(&conn, cfg.clone(), custom_decoders).await?)
     }
 }
 
@@ -168,6 +174,19 @@ pub struct RabbitMqConsumer {
     requeue_on_nack: bool,
 }
 
+impl RabbitMqConsumer {
+    fn wrap_delivery(&self, delivery: lapin::message::Delivery) -> Delivery {
+        Delivery {
+            decoders: self.registry.clone(),
+            payload: Some(delivery.data),
+            acker: Box::new(RabbitMqAcker {
+                acker: Some(delivery.acker),
+                requeue_on_nack: self.requeue_on_nack,
+            }),
+        }
+    }
+}
+
 #[async_trait]
 impl QueueConsumer for RabbitMqConsumer {
     type Payload = Vec<u8>;
@@ -178,18 +197,42 @@ impl QueueConsumer for RabbitMqConsumer {
                 .clone()
                 .map(|l: Result<lapin::message::Delivery, lapin::Error>| {
                     let l = l.map_err(QueueError::generic)?;
-
-                    Ok(Delivery {
-                        decoders: self.registry.clone(),
-                        payload: Some(l.data),
-                        acker: Box::new(RabbitMqAcker {
-                            acker: Some(l.acker),
-                            requeue_on_nack: self.requeue_on_nack,
-                        }),
-                    })
+                    Ok(self.wrap_delivery(l))
                 });
 
         stream.next().await.ok_or(QueueError::NoData)?
+    }
+
+    async fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> Result<Vec<Delivery>, QueueError> {
+        let mut stream = self.consumer.clone().map(
+            |l: Result<lapin::message::Delivery, lapin::Error>| -> Result<Delivery, QueueError> {
+                let l = l.map_err(QueueError::generic)?;
+                Ok(self.wrap_delivery(l))
+            },
+        );
+        let start = Instant::now();
+        let mut out = Vec::with_capacity(max_messages);
+        match tokio::time::timeout(deadline, stream.next()).await {
+            Ok(Some(x)) => out.push(x?),
+            // Timeouts and stream termination
+            Err(_) | Ok(None) => return Ok(out),
+        }
+
+        if max_messages > 1 {
+            // `now_or_never` will break the loop if no ready items are already buffered in the stream.
+            // This should allow us to opportunistically fill up the buffer in the remaining time.
+            while let Some(Some(x)) = stream.next().now_or_never() {
+                out.push(x?);
+                if out.len() >= max_messages || start.elapsed() >= deadline {
+                    break;
+                }
+            }
+        }
+        Ok(out)
     }
 }
 

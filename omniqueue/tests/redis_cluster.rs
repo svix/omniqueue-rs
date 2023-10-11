@@ -4,6 +4,7 @@ use omniqueue::{
 };
 use redis::{cluster::ClusterClient, AsyncCommands, Commands};
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 const ROOT_URL: &str = "redis://localhost:6380";
 
@@ -125,4 +126,123 @@ async fn test_custom_send_recv() {
     // Because it doesn't use JSON, this should fail:
     d.payload_serde_json::<ExType>().unwrap_err();
     d.ack().await.unwrap();
+}
+
+/// Consumer will return immediately if there are fewer than max messages to start with.
+#[tokio::test]
+async fn test_send_recv_all_partial() {
+    let (builder, _drop) = make_test_queue().await;
+
+    let payload = ExType { a: 2 };
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+    let deadline = Duration::from_secs(1);
+
+    let now = Instant::now();
+    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    assert_eq!(xs.len(), 1);
+    let d = xs.remove(0);
+    assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
+    d.ack().await.unwrap();
+    assert!(now.elapsed() <= deadline);
+}
+
+/// Consumer should yield items immediately if there's a full batch ready on the first poll.
+#[tokio::test]
+async fn test_send_recv_all_full() {
+    let payload1 = ExType { a: 1 };
+    let payload2 = ExType { a: 2 };
+
+    let (builder, _drop) = make_test_queue().await;
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload1).await.unwrap();
+    p.send_serde_json(&payload2).await.unwrap();
+    let deadline = Duration::from_secs(1);
+
+    let now = Instant::now();
+    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    assert_eq!(xs.len(), 2);
+    let d1 = xs.remove(0);
+    assert_eq!(
+        d1.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload1
+    );
+    d1.ack().await.unwrap();
+
+    let d2 = xs.remove(0);
+    assert_eq!(
+        d2.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload2
+    );
+    d2.ack().await.unwrap();
+    // N.b. it's still possible this could turn up false if the test runs too slow.
+    assert!(now.elapsed() < deadline);
+}
+
+/// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
+#[tokio::test]
+async fn test_send_recv_all_full_then_partial() {
+    let payload1 = ExType { a: 1 };
+    let payload2 = ExType { a: 2 };
+    let payload3 = ExType { a: 3 };
+
+    let (builder, _drop) = make_test_queue().await;
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload1).await.unwrap();
+    p.send_serde_json(&payload2).await.unwrap();
+    p.send_serde_json(&payload3).await.unwrap();
+
+    let deadline = Duration::from_secs(1);
+    let now1 = Instant::now();
+    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    assert_eq!(xs.len(), 2);
+    let d1 = xs.remove(0);
+    assert_eq!(
+        d1.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload1
+    );
+    d1.ack().await.unwrap();
+
+    let d2 = xs.remove(0);
+    assert_eq!(
+        d2.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload2
+    );
+    d2.ack().await.unwrap();
+    assert!(now1.elapsed() < deadline);
+
+    // 2nd call
+    let now2 = Instant::now();
+    let mut ys = c.receive_all(2, deadline).await.unwrap();
+    assert_eq!(ys.len(), 1);
+    let d3 = ys.remove(0);
+    assert_eq!(
+        d3.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload3
+    );
+    d3.ack().await.unwrap();
+    assert!(now2.elapsed() < deadline);
+}
+
+/// Consumer will NOT wait indefinitely for at least one item.
+#[tokio::test]
+async fn test_send_recv_all_late_arriving_items() {
+    let (builder, _drop) = make_test_queue().await;
+
+    let (_p, mut c) = builder.build_pair().await.unwrap();
+
+    let deadline = Duration::from_secs(1);
+    let now = Instant::now();
+    let xs = c.receive_all(2, deadline).await.unwrap();
+    let elapsed = now.elapsed();
+
+    assert_eq!(xs.len(), 0);
+    // Elapsed should be around the deadline, ballpark
+    assert!(elapsed >= deadline);
+    assert!(elapsed <= deadline + Duration::from_millis(200));
 }

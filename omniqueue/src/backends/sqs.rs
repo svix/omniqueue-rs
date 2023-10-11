@@ -1,6 +1,8 @@
+use std::time::Duration;
 use std::{any::TypeId, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
+use aws_sdk_sqs::types::Message;
 use aws_sdk_sqs::{
     operation::delete_message::DeleteMessageError, types::error::ReceiptHandleIsInvalid, Client,
 };
@@ -240,6 +242,21 @@ pub struct SqsQueueConsumer {
     queue_dsn: String,
 }
 
+impl SqsQueueConsumer {
+    fn wrap_message(&self, message: &Message) -> Delivery {
+        Delivery {
+            decoders: self.bytes_registry.clone(),
+            acker: Box::new(SqsAcker {
+                ack_client: self.client.clone(),
+                queue_dsn: self.queue_dsn.clone(),
+                receipt_handle: message.receipt_handle().map(ToOwned::to_owned),
+                has_been_acked_or_nacked: false,
+            }),
+            payload: Some(message.body().unwrap_or_default().as_bytes().to_owned()),
+        }
+    }
+}
+
 #[async_trait]
 impl QueueConsumer for SqsQueueConsumer {
     type Payload = String;
@@ -257,19 +274,33 @@ impl QueueConsumer for SqsQueueConsumer {
         out.messages()
             .unwrap_or_default()
             .iter()
-            .map(|message| -> Result<Delivery, QueueError> {
-                Ok(Delivery {
-                    decoders: self.bytes_registry.clone(),
-                    acker: Box::new(SqsAcker {
-                        ack_client: self.client.clone(),
-                        queue_dsn: self.queue_dsn.clone(),
-                        receipt_handle: message.receipt_handle().map(ToOwned::to_owned),
-                        has_been_acked_or_nacked: false,
-                    }),
-                    payload: Some(message.body().unwrap_or_default().as_bytes().to_owned()),
-                })
-            })
+            .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
             .next()
             .ok_or(QueueError::NoData)?
+    }
+
+    async fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> Result<Vec<Delivery>, QueueError> {
+        let out = self
+            .client
+            .receive_message()
+            .set_wait_time_seconds(Some(
+                deadline.as_secs().try_into().map_err(QueueError::generic)?,
+            ))
+            .set_max_number_of_messages(Some(max_messages.try_into().map_err(QueueError::generic)?))
+            .queue_url(&self.queue_dsn)
+            .send()
+            .await
+            .map_err(QueueError::generic)?;
+
+        Ok(out
+            .messages()
+            .unwrap_or_default()
+            .iter()
+            .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
+            .collect::<Result<Vec<_>, _>>()?)
     }
 }

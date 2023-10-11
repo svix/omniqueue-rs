@@ -1,9 +1,10 @@
+use std::time::Duration;
 use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
 pub use bb8_redis::RedisMultiplexedConnectionManager;
-use redis::streams::{StreamReadOptions, StreamReadReply};
+use redis::streams::{StreamId, StreamReadOptions, StreamReadReply};
 
 use crate::{
     decoding::DecoderRegistry,
@@ -219,6 +220,31 @@ pub struct RedisStreamConsumer<M: ManageConnection> {
     payload_key: String,
 }
 
+impl<M> RedisStreamConsumer<M>
+where
+    M: ManageConnection,
+    M::Connection: redis::aio::ConnectionLike + Send + Sync,
+    M::Error: 'static + std::error::Error + Send + Sync,
+{
+    fn wrap_entry(&self, entry: StreamId) -> Result<Delivery, QueueError> {
+        let entry_id = entry.id.clone();
+        let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
+        let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
+
+        Ok(Delivery {
+            payload: Some(payload),
+            acker: Box::new(RedisStreamAcker {
+                redis: self.redis.clone(),
+                queue_key: self.queue_key.clone(),
+                consumer_group: self.consumer_group.clone(),
+                entry_id,
+                already_acked_or_nacked: false,
+            }),
+            decoders: self.registry.clone(),
+        })
+    }
+}
+
 #[async_trait]
 impl<M> QueueConsumer for RedisStreamConsumer<M>
 where
@@ -247,21 +273,40 @@ where
         let queue = read_out.keys.into_iter().next().ok_or(QueueError::NoData)?;
 
         let entry = queue.ids.into_iter().next().ok_or(QueueError::NoData)?;
+        self.wrap_entry(entry)
+    }
 
-        let entry_id = entry.id.clone();
-        let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
-        let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
+    async fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> Result<Vec<Delivery>, QueueError> {
+        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
 
-        Ok(Delivery {
-            payload: Some(payload),
-            acker: Box::new(RedisStreamAcker {
-                redis: self.redis.clone(),
-                queue_key: self.queue_key.clone(),
-                consumer_group: self.consumer_group.clone(),
-                entry_id,
-                already_acked_or_nacked: false,
-            }),
-            decoders: self.registry.clone(),
-        })
+        let read_out: StreamReadReply = redis::Cmd::xread_options(
+            &[&self.queue_key],
+            &[">"],
+            &StreamReadOptions::default()
+                .group(&self.consumer_group, &self.consumer_name)
+                .block(
+                    deadline
+                        .as_millis()
+                        .try_into()
+                        .map_err(QueueError::generic)?,
+                )
+                .count(max_messages),
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(QueueError::generic)?;
+
+        let mut out = Vec::with_capacity(max_messages);
+
+        if let Some(queue) = read_out.keys.into_iter().next() {
+            for entry in queue.ids {
+                out.push(self.wrap_entry(entry)?);
+            }
+        }
+        Ok(out)
     }
 }
