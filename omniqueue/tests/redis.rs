@@ -1,6 +1,7 @@
 use omniqueue::{
     backends::redis::{RedisConfig, RedisQueueBackend},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
+    scheduled::ScheduledProducer,
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
@@ -42,6 +43,7 @@ async fn make_test_queue() -> (QueueBuilder<RedisQueueBackend, Static>, RedisStr
         max_connections: 8,
         reinsert_on_nack: false,
         queue_key: stream_name.clone(),
+        delayed_queue_key: format!("{stream_name}::delayed"),
         consumer_group: "test_cg".to_owned(),
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
@@ -242,4 +244,26 @@ async fn test_send_recv_all_late_arriving_items() {
     // Elapsed should be around the deadline, ballpark
     assert!(elapsed >= deadline);
     assert!(elapsed <= deadline + Duration::from_millis(200));
+}
+
+#[tokio::test]
+async fn test_scheduled() {
+    let payload1 = ExType { a: 1 };
+    let (builder, _drop) = make_test_queue().await;
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    let delay = Duration::from_secs(3);
+    let now = Instant::now();
+    p.send_serde_json_scheduled(&payload1, delay).await.unwrap();
+    let delivery = c
+        .receive_all(1, delay * 2)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(now.elapsed() >= delay);
+    assert!(now.elapsed() < delay * 2);
+    assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
 }

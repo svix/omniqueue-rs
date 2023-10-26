@@ -25,13 +25,13 @@ pub struct SqsQueueBackend;
 
 #[async_trait]
 impl QueueBackend for SqsQueueBackend {
-    type Config = SqsConfig;
-
     type PayloadIn = String;
-    type PayloadOut = String;
 
+    type PayloadOut = String;
     type Producer = SqsQueueProducer;
+
     type Consumer = SqsQueueConsumer;
+    type Config = SqsConfig;
 
     async fn new_pair(
         cfg: SqsConfig,
@@ -221,7 +221,7 @@ impl ScheduledProducer for SqsQueueProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,
-        delay: std::time::Duration,
+        delay: Duration,
     ) -> Result<(), QueueError> {
         self.client
             .send_message()

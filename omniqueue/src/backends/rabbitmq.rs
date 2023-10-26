@@ -4,6 +4,7 @@ use std::{any::TypeId, collections::HashMap};
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures_util::FutureExt;
+use lapin::types::AMQPValue;
 pub use lapin::{
     acker::Acker as LapinAcker,
     options::{
@@ -18,6 +19,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    scheduled::ScheduledProducer,
     QueueError,
 };
 
@@ -89,13 +91,13 @@ async fn producer(
 
 #[async_trait]
 impl QueueBackend for RabbitMqBackend {
-    type Config = RabbitMqConfig;
-
     type PayloadIn = Vec<u8>;
+
     type PayloadOut = Vec<u8>;
+    type Producer = RabbitMqProducer;
 
     type Consumer = RabbitMqConsumer;
-    type Producer = RabbitMqProducer;
+    type Config = RabbitMqConfig;
 
     async fn new_pair(
         cfg: RabbitMqConfig,
@@ -160,6 +162,36 @@ impl QueueProducer for RabbitMqProducer {
                 self.options,
                 payload,
                 self.properties.clone(),
+            )
+            .await
+            .map_err(QueueError::generic)?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ScheduledProducer for RabbitMqProducer {
+    async fn send_raw_scheduled(
+        &self,
+        payload: &Self::Payload,
+        delay: Duration,
+    ) -> Result<(), QueueError> {
+        let mut headers = FieldTable::default();
+
+        let delay_ms: u32 = delay
+            .as_millis()
+            .try_into()
+            .map_err(|_| QueueError::Generic("delay is too large".into()))?;
+        headers.insert("x-delay".into(), AMQPValue::LongUInt(delay_ms));
+
+        self.channel
+            .basic_publish(
+                &self.exchange,
+                &self.routing_key,
+                self.options,
+                payload,
+                self.properties.clone().with_headers(headers),
             )
             .await
             .map_err(QueueError::generic)?;

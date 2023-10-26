@@ -1,10 +1,15 @@
 version: "3.7"
 services:
-  mq:
+  rabbitmq:
     image: rabbitmq:3.11.11-management-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
+    environment:
+      RABBITMQ_PLUGINS_DIR: "/opt/rabbitmq/plugins:/usr/lib/rabbitmq/plugins"
+    volumes:
+      - ./_rabbit/enabled_plugins:/etc/rabbitmq/enabled_plugins
+      - ./_rabbit/plugins:/usr/lib/rabbitmq/plugins
 
   elasticmq: # Drop-in SQS replacement
     image: softwaremill/elasticmq:1.3.14
