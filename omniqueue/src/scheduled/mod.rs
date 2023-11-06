@@ -15,9 +15,10 @@ use crate::{
     QueueError, QueuePayload,
 };
 
+// FIXME(onelson): only used by redis -- is this meant to be called internally or by the caller building the backend?
 #[async_trait]
 pub trait SchedulerBackend: QueueBackend {
-    async fn start_schedluer_background_task(
+    async fn start_scheduler_background_task(
         &self,
     ) -> Option<tokio::task::JoinHandle<Result<(), QueueError>>>;
 }

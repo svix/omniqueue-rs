@@ -1,3 +1,29 @@
+//! Redis stream-based queue implementation
+//!
+//! # Redis Streams in Brief
+//! Redis has a built-in queue called streams. With consumer groups and consumers, messages in this
+//! queue will automatically be put into a pending queue when read and deleted when acknowledged.
+//!
+//! # The Implementation
+//! This implementation uses this to allow worker instances to race for messages to dispatch which
+//! are then, ideally, acknowledged. If a message is processing for more than 45 seconds, it is
+//! reinserted at the back of the queue to be tried again.
+//!
+//! This implementation uses the following data structures:
+//! - A "tasks to be processed" stream - which is what the consumer listens to for tasks.
+//!     AKA: Main
+//! - A ZSET for delayed tasks with the sort order being the time-to-be-delivered
+//!     AKA: Delayed
+//!
+//! The implementation spawns an additional worker that monitors both the zset delayed tasks and
+//! the tasks currently processing. It monitors the zset task set for tasks that should be
+//! processed now, and the currently processing queue for tasks that have timed out and should be
+//! put back on the main queue.
+
+// This lint warns on `let _: () = ...` which is used throughout this file for Redis commands which
+// have generic return types. This is cleaner than the turbofish operator in my opinion.
+#![allow(clippy::let_unit_value)]
+
 use std::time::Duration;
 use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
@@ -5,11 +31,14 @@ use async_trait::async_trait;
 use bb8::ManageConnection;
 pub use bb8_redis::RedisMultiplexedConnectionManager;
 use redis::streams::{StreamId, StreamReadOptions, StreamReadReply};
+use svix_ksuid::KsuidLike;
+use tokio::task::JoinHandle;
 
 use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    scheduled::ScheduledProducer,
     QueueError,
 };
 
@@ -42,6 +71,7 @@ pub struct RedisConfig {
     pub max_connections: u16,
     pub reinsert_on_nack: bool,
     pub queue_key: String,
+    pub delayed_queue_key: String,
     pub consumer_group: String,
     pub consumer_name: String,
     pub payload_key: String,
@@ -50,6 +80,8 @@ pub struct RedisConfig {
 pub struct RedisQueueBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
 pub type RedisClusterQueueBackend = RedisQueueBackend<RedisClusterConnectionManager>;
 
+type RawPayload = Vec<u8>;
+
 #[async_trait]
 impl<R> QueueBackend for RedisQueueBackend<R>
 where
@@ -57,14 +89,14 @@ where
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
     R::Error: 'static + std::error::Error + Send + Sync,
 {
-    type Config = RedisConfig;
-
     // FIXME: Is it possible to use the types Redis actually uses?
-    type PayloadIn = Vec<u8>;
-    type PayloadOut = Vec<u8>;
+    type PayloadIn = RawPayload;
 
+    type PayloadOut = RawPayload;
     type Producer = RedisStreamProducer<R>;
+
     type Consumer = RedisStreamConsumer<R>;
+    type Config = RedisConfig;
 
     async fn new_pair(
         cfg: RedisConfig,
@@ -78,11 +110,20 @@ where
             .await
             .map_err(QueueError::generic)?;
 
+        let _ = start_scheduler_background_task(
+            redis.clone(),
+            &cfg.queue_key,
+            &cfg.delayed_queue_key,
+            &cfg.payload_key,
+        )
+        .await;
+
         Ok((
             RedisStreamProducer {
                 registry: custom_encoders,
                 redis: redis.clone(),
                 queue_key: cfg.queue_key.clone(),
+                delayed_queue_key: cfg.delayed_queue_key,
                 payload_key: cfg.payload_key.clone(),
             },
             RedisStreamConsumer {
@@ -107,10 +148,18 @@ where
             .await
             .map_err(QueueError::generic)?;
 
+        let _ = start_scheduler_background_task(
+            redis.clone(),
+            &cfg.queue_key,
+            &cfg.delayed_queue_key,
+            &cfg.payload_key,
+        )
+        .await;
         Ok(RedisStreamProducer {
             registry: custom_encoders,
             redis,
             queue_key: cfg.queue_key,
+            delayed_queue_key: cfg.delayed_queue_key,
             payload_key: cfg.payload_key,
         })
     }
@@ -126,6 +175,13 @@ where
             .await
             .map_err(QueueError::generic)?;
 
+        let _ = start_scheduler_background_task(
+            redis.clone(),
+            &cfg.queue_key,
+            &cfg.delayed_queue_key,
+            &cfg.payload_key,
+        )
+        .await;
         Ok(RedisStreamConsumer {
             registry: custom_decoders,
             redis,
@@ -135,6 +191,166 @@ where
             payload_key: cfg.payload_key,
         })
     }
+}
+
+// FIXME(onelson): there's a trait, [`SchedulerBackend`], but no obvious way to implement it in a
+//   way that makes good sense here.
+//   We need access to the pool, and various bits of config to spawn a task, but none of that is
+//   available where it matters right now.
+//   Doing my own thing for now - standalone function that takes what it needs.
+async fn start_scheduler_background_task<R>(
+    redis: bb8::Pool<R>,
+    queue_key: &str,
+    delayed_queue_key: &str,
+    payload_key: &str,
+) -> Option<JoinHandle<Result<(), QueueError>>>
+where
+    R: RedisConnection,
+    R::Connection: redis::aio::ConnectionLike + Send + Sync,
+    R::Error: 'static + std::error::Error + Send + Sync,
+{
+    if delayed_queue_key.is_empty() {
+        tracing::warn!("no delayed_queue_key specified - delayed task scheduler disabled");
+        return None;
+    }
+
+    Some(tokio::spawn({
+        let pool = redis.clone();
+        let mqn = queue_key.to_string();
+        let dqn = delayed_queue_key.to_string();
+        let delayed_lock = format!("{delayed_queue_key}__lock");
+        let payload_key = payload_key.to_string();
+        tracing::debug!(
+            "spawning delayed task scheduler: delayed_queue_key=`{delayed_queue_key}`, \
+            delayed_lock=`{delayed_lock}`"
+        );
+
+        async move {
+            loop {
+                if let Err(err) = background_task_delayed(
+                    pool.clone(),
+                    mqn.clone(),
+                    dqn.clone(),
+                    &delayed_lock,
+                    &payload_key,
+                )
+                .await
+                {
+                    tracing::error!("{}", err);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                };
+            }
+        }
+    }))
+}
+
+/// Special ID for XADD command's which generates a stream ID automatically
+const GENERATE_STREAM_ID: &str = "*";
+/// Special ID for XREADGROUP commands which reads any new messages
+const LISTEN_STREAM_ID: &str = ">";
+
+/// Moves "due" messages from a sorted set, where delayed messages are shelved, back onto the main queue.
+async fn background_task_delayed<R>(
+    pool: bb8::Pool<R>,
+    main_queue_name: String,
+    delayed_queue_name: String,
+    delayed_lock: &str,
+    payload_key: &str,
+) -> Result<(), QueueError>
+where
+    R: RedisConnection,
+    R::Connection: redis::aio::ConnectionLike + Send + Sync,
+    R::Error: 'static + std::error::Error + Send + Sync,
+{
+    let batch_size: isize = 50;
+
+    let mut conn = pool.get().await.map_err(QueueError::generic)?;
+
+    // There is a lock on the delayed queue processing to avoid race conditions. So first try to
+    // acquire the lock should it not already exist. The lock expires after five seconds in case a
+    // worker crashes while holding the lock.
+    let mut cmd = redis::cmd("SET");
+    cmd.arg(delayed_lock)
+        .arg(true)
+        .arg("NX")
+        .arg("PX")
+        .arg(5000);
+    // WIll be Some("OK") when set or None when not set
+    let resp: Option<String> = cmd
+        .query_async(&mut *conn)
+        .await
+        .map_err(QueueError::generic)?;
+
+    if resp.as_deref() == Some("OK") {
+        // First look for delayed keys whose time is up and add them to the main queue
+        let timestamp: i64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(QueueError::generic)?
+            .as_secs()
+            .try_into()
+            .map_err(QueueError::generic)?;
+
+        let keys: Vec<String> = redis::Cmd::zrangebyscore_limit(
+            &delayed_queue_name,
+            0isize,
+            // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
+            // preventing premature delivery.
+            timestamp - 1,
+            0isize,
+            batch_size,
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(QueueError::generic)?;
+
+        if !keys.is_empty() {
+            // For each task, XADD them to the MAIN queue
+            let mut pipe = redis::pipe();
+            for key in &keys {
+                // XXX: would be sort of nice if we could borrow a slice of bytes instead
+                // of allocating a vec for each payload.
+                // I bet serde allows for this somehow, but redis probably ends up allocating
+                // before the value hits the wire anyway.
+                let payload = from_delayed_queue_key(key)?;
+                let _ = pipe.xadd(
+                    &main_queue_name,
+                    GENERATE_STREAM_ID,
+                    &[(payload_key, payload)],
+                );
+            }
+            let _: () = pipe
+                .query_async(&mut *conn)
+                .await
+                .map_err(QueueError::generic)?;
+
+            // Then remove the tasks from the delayed queue so they aren't resent
+            let _: () = redis::Cmd::zrem(&delayed_queue_name, keys)
+                .query_async(&mut *conn)
+                .await
+                .map_err(QueueError::generic)?;
+
+            // Make sure to release the lock after done processing
+            let _: () = redis::Cmd::del(delayed_lock)
+                .query_async(&mut *conn)
+                .await
+                .map_err(QueueError::generic)?;
+        } else {
+            // Make sure to release the lock before sleeping
+            let _: () = redis::Cmd::del(delayed_lock)
+                .query_async(&mut *conn)
+                .await
+                .map_err(QueueError::generic)?;
+
+            // Wait for half a second before attempting to fetch again if nothing was found
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    } else {
+        // Also sleep half a second if the lock could not be fetched
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    Ok(())
 }
 
 pub struct RedisStreamAcker<M: ManageConnection> {
@@ -184,6 +400,7 @@ pub struct RedisStreamProducer<M: ManageConnection> {
     registry: EncoderRegistry<Vec<u8>>,
     redis: bb8::Pool<M>,
     queue_key: String,
+    delayed_queue_key: String,
     payload_key: String,
 }
 
@@ -202,11 +419,78 @@ where
 
     async fn send_raw(&self, payload: &Vec<u8>) -> Result<(), QueueError> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-        redis::Cmd::xadd(&self.queue_key, "*", &[(&self.payload_key, payload)])
-            .query_async(&mut *conn)
-            .await
+        redis::Cmd::xadd(
+            &self.queue_key,
+            GENERATE_STREAM_ID,
+            &[(&self.payload_key, payload)],
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(QueueError::generic)?;
+
+        Ok(())
+    }
+}
+
+/// Acts as a payload prefix for when payloads are written to zset keys.
+///
+/// This ensures that messages with identical payloads:
+/// - don't only get delivered once instead of N times.
+/// - don't replace each other's "delivery due" timestamp.
+fn delayed_key_id() -> String {
+    svix_ksuid::Ksuid::new(None, None).to_base62()
+}
+
+/// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
+fn to_delayed_queue_key(payload: &RawPayload) -> Result<String, QueueError> {
+    Ok(format!(
+        "{}|{}",
+        delayed_key_id(),
+        serde_json::to_string(payload).map_err(QueueError::generic)?
+    ))
+}
+
+/// Returns the payload portion of a delayed zset key.
+fn from_delayed_queue_key(key: &str) -> Result<RawPayload, QueueError> {
+    // All information is stored in the key in which the ID and JSON formatted task
+    // are separated by a `|`. So, take the key, then take the part after the `|`.
+    serde_json::from_str(
+        key.split('|')
+            .nth(1)
+            .ok_or_else(|| QueueError::Generic("Improper key format".into()))?,
+    )
+    .map_err(QueueError::generic)
+}
+
+#[async_trait]
+impl<M> ScheduledProducer for RedisStreamProducer<M>
+where
+    M: ManageConnection,
+    M::Connection: redis::aio::ConnectionLike + Send + Sync,
+    M::Error: 'static + std::error::Error + Send + Sync,
+{
+    async fn send_raw_scheduled(
+        &self,
+        payload: &Self::Payload,
+        delay: Duration,
+    ) -> Result<(), QueueError> {
+        let timestamp: i64 = (std::time::SystemTime::now() + delay)
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(QueueError::generic)?
+            .as_secs()
+            .try_into()
             .map_err(QueueError::generic)?;
 
+        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
+        redis::Cmd::zadd(
+            &self.delayed_queue_key,
+            to_delayed_queue_key(payload)?,
+            timestamp,
+        )
+        .query_async(&mut *conn)
+        .await
+        .map_err(QueueError::generic)?;
+        tracing::trace!("RedisQueue: event sent > (delay: {:?})", delay);
         Ok(())
     }
 }
@@ -260,7 +544,7 @@ where
         // Ensure an empty vec is never returned
         let read_out: StreamReadReply = redis::Cmd::xread_options(
             &[&self.queue_key],
-            &[">"],
+            &[LISTEN_STREAM_ID],
             &StreamReadOptions::default()
                 .group(&self.consumer_group, &self.consumer_name)
                 .block(100_000)
@@ -285,7 +569,7 @@ where
 
         let read_out: StreamReadReply = redis::Cmd::xread_options(
             &[&self.queue_key],
-            &[">"],
+            &[LISTEN_STREAM_ID],
             &StreamReadOptions::default()
                 .group(&self.consumer_group, &self.consumer_name)
                 .block(

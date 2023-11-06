@@ -1,11 +1,14 @@
+use lapin::options::ExchangeDeclareOptions;
+use lapin::types::AMQPValue;
 use lapin::{
     options::{BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions},
     types::FieldTable,
-    BasicProperties, Connection, ConnectionProperties,
+    BasicProperties, Connection, ConnectionProperties, ExchangeKind,
 };
 use omniqueue::{
     backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
+    scheduled::ScheduledProducer,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -49,10 +52,39 @@ async fn make_test_queue(
         .await
         .unwrap();
 
+    const DELAY_EXCHANGE: &str = "later-alligator";
+    let mut args = FieldTable::default();
+    args.insert(
+        "x-delayed-type".into(),
+        AMQPValue::LongString("direct".into()),
+    );
+    channel
+        .exchange_declare(
+            DELAY_EXCHANGE,
+            ExchangeKind::Custom("x-delayed-message".to_string()),
+            ExchangeDeclareOptions {
+                auto_delete: true,
+                ..Default::default()
+            },
+            args,
+        )
+        .await
+        .unwrap();
+    channel
+        .queue_bind(
+            &queue_name,
+            DELAY_EXCHANGE,
+            &queue_name,
+            Default::default(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
     let config = RabbitMqConfig {
         uri: MQ_URI.to_owned(),
         connection_properties: options,
-        publish_exchange: "".to_owned(),
+        publish_exchange: DELAY_EXCHANGE.to_string(),
         publish_routing_key: queue_name.clone(),
         publish_options: BasicPublishOptions::default(),
         publish_properties: BasicProperties::default(),
@@ -271,4 +303,28 @@ async fn test_send_recv_all_late_arriving_items() {
     // Elapsed should be around the deadline, ballpark
     assert!(elapsed >= deadline);
     assert!(elapsed <= deadline + Duration::from_millis(200));
+}
+
+#[tokio::test]
+async fn test_scheduled() {
+    let payload1 = ExType { a: 1 };
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
+
+    let delay = Duration::from_secs(3);
+    let now = Instant::now();
+    p.send_serde_json_scheduled(&payload1, delay).await.unwrap();
+    let delivery = c
+        .receive_all(1, delay * 2)
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(now.elapsed() >= delay);
+    assert!(now.elapsed() < delay * 2);
+    assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
 }

@@ -9,6 +9,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    scheduled::ScheduledProducer,
     QueueError,
 };
 
@@ -16,13 +17,13 @@ pub struct MemoryQueueBackend;
 
 #[async_trait]
 impl QueueBackend for MemoryQueueBackend {
-    type Config = usize;
-
     type PayloadIn = Vec<u8>;
-    type PayloadOut = Vec<u8>;
 
+    type PayloadOut = Vec<u8>;
     type Producer = MemoryQueueProducer;
+
     type Consumer = MemoryQueueConsumer;
+    type Config = usize;
 
     async fn new_pair(
         config: usize,
@@ -72,7 +73,7 @@ impl QueueProducer for MemoryQueueProducer {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &Self::Payload) -> Result<(), QueueError> {
         self.tx
             .send(payload.clone())
             .map(|_| ())
@@ -82,6 +83,26 @@ impl QueueProducer for MemoryQueueProducer {
     async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<(), QueueError> {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw(&payload).await
+    }
+}
+
+#[async_trait]
+impl ScheduledProducer for MemoryQueueProducer {
+    async fn send_raw_scheduled(
+        &self,
+        payload: &Self::Payload,
+        delay: Duration,
+    ) -> Result<(), QueueError> {
+        let tx = self.tx.clone();
+        let payload = payload.clone();
+        tokio::spawn(async move {
+            tracing::trace!("MemoryQueue: event sent > (delay: {:?})", delay);
+            tokio::time::sleep(delay).await;
+            if tx.send(payload).is_err() {
+                tracing::error!("Receiver dropped");
+            }
+        });
+        Ok(())
     }
 }
 
@@ -99,7 +120,7 @@ impl MemoryQueueConsumer {
             acker: Box::new(MemoryQueueAcker {
                 tx: self.tx.clone(),
                 payload_copy: Some(payload),
-                alredy_acked_or_nacked: false,
+                already_acked_or_nacked: false,
             }),
         }
     }
@@ -144,25 +165,25 @@ impl QueueConsumer for MemoryQueueConsumer {
 pub struct MemoryQueueAcker {
     tx: broadcast::Sender<Vec<u8>>,
     payload_copy: Option<Vec<u8>>,
-    alredy_acked_or_nacked: bool,
+    already_acked_or_nacked: bool,
 }
 
 #[async_trait]
 impl Acker for MemoryQueueAcker {
     async fn ack(&mut self) -> Result<(), QueueError> {
-        if self.alredy_acked_or_nacked {
+        if self.already_acked_or_nacked {
             Err(QueueError::CannotAckOrNackTwice)
         } else {
-            self.alredy_acked_or_nacked = true;
+            self.already_acked_or_nacked = true;
             Ok(())
         }
     }
 
     async fn nack(&mut self) -> Result<(), QueueError> {
-        if self.alredy_acked_or_nacked {
+        if self.already_acked_or_nacked {
             Err(QueueError::CannotAckOrNackTwice)
         } else {
-            self.alredy_acked_or_nacked = true;
+            self.already_acked_or_nacked = true;
             self.tx
                 .send(
                     self.payload_copy
@@ -182,6 +203,7 @@ mod tests {
 
     use crate::{
         queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder},
+        scheduled::ScheduledProducer,
         QueueError,
     };
 
@@ -394,5 +416,29 @@ mod tests {
         // Elapsed should be around the deadline, ballpark
         assert!(elapsed >= deadline);
         assert!(elapsed <= deadline + Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn test_scheduled() {
+        let payload1 = ExType { a: 1 };
+
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+            .build_pair()
+            .await
+            .unwrap();
+
+        let delay = Duration::from_millis(100);
+        let now = Instant::now();
+        p.send_serde_json_scheduled(&payload1, delay).await.unwrap();
+        let delivery = c
+            .receive_all(1, delay * 2)
+            .await
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(now.elapsed() >= delay);
+        assert!(now.elapsed() < delay * 2);
+        assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
     }
 }
