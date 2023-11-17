@@ -47,6 +47,7 @@ async fn make_test_queue() -> (QueueBuilder<RedisQueueBackend, Static>, RedisStr
         consumer_group: "test_cg".to_owned(),
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
+        ack_deadline_ms: 5_000,
     };
 
     (
@@ -266,4 +267,51 @@ async fn test_scheduled() {
     assert!(now.elapsed() >= delay);
     assert!(now.elapsed() < delay * 2);
     assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
+}
+
+#[tokio::test]
+async fn test_pending() {
+    let payload1 = ExType { a: 1 };
+    let payload2 = ExType { a: 2 };
+    let (builder, _drop) = make_test_queue().await;
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload1).await.unwrap();
+    p.send_serde_json(&payload2).await.unwrap();
+    let delivery1 = c.receive().await.unwrap();
+    let delivery2 = c.receive().await.unwrap();
+
+    // All items claimed, but not yet ack'd. There shouldn't be anything available yet.
+    assert!(c
+        .receive_all(1, Duration::from_millis(1))
+        .await
+        .unwrap()
+        .is_empty());
+
+    assert_eq!(
+        Some(&payload1),
+        delivery1.payload_serde_json().unwrap().as_ref()
+    );
+    assert_eq!(
+        Some(&payload2),
+        delivery2.payload_serde_json().unwrap().as_ref()
+    );
+
+    // ack 2, but neglect 1
+    let _ = delivery2.ack().await;
+
+    // After the deadline, the first payload should appear again.
+    let delivery3 = c.receive().await.unwrap();
+    assert_eq!(
+        Some(&payload1),
+        delivery3.payload_serde_json().unwrap().as_ref()
+    );
+
+    // queue should be empty once again
+    assert!(c
+        .receive_all(1, Duration::from_millis(1))
+        .await
+        .unwrap()
+        .is_empty());
 }
