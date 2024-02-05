@@ -1,3 +1,4 @@
+use std::fmt;
 use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
 
 use async_trait::async_trait;
@@ -113,6 +114,12 @@ impl Delivery {
             return Ok(None);
         };
         serde_json::from_slice(bytes).map_err(Into::into)
+    }
+}
+
+impl fmt::Debug for Delivery {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Delivery").finish()
     }
 }
 
