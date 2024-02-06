@@ -4,13 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'omniqueue/**'
-      - '.github/workflows/lint.yml'
   pull_request:
-    paths:
-      - 'omniqueue/**'
-      - '.github/workflows/lint.yml'
 
 jobs:
   test-versions:
@@ -30,20 +24,18 @@ jobs:
         components: clippy, rustfmt
 
     - uses: Swatinem/rust-cache@v1
-      with:
-        working-directory: omniqueue
 
     - name: Clippy
       uses: actions-rs/cargo@v1
       with:
         command: clippy
-        args: --manifest-path omniqueue/Cargo.toml --all --all-targets --all-features -- -D warnings
+        args: --all --all-targets --all-features -- -D warnings
 
     - name: rustfmt
       uses: actions-rs/cargo@v1
       with:
         command: fmt
-        args: --manifest-path omniqueue/Cargo.toml --all -- --check
+        args: --all -- --check
 
     - name: Start test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" up -d
@@ -56,7 +48,7 @@ jobs:
         AWS_SECRET_ACCESS_KEY: x
       with:
         command: test
-        args: --manifest-path omniqueue/Cargo.toml --all --all-features
+        args: --all --all-features
 
     - name: Stop test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" down
