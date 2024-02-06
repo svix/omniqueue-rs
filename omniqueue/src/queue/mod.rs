@@ -64,21 +64,25 @@ pub struct Delivery {
 }
 
 impl Delivery {
-    /// Acknowledges the receipt and successful processing of this [`Delivery`]. The exact nature of
-    /// this will vary per backend, but usually it ensures that the same message is not reprocessed.
+    /// Acknowledges the receipt and successful processing of this [`Delivery`].
+    ///
+    /// The exact nature of this will vary per backend, but usually it ensures that the same message
+    /// is not reprocessed.
     pub async fn ack(mut self) -> Result<(), QueueError> {
         self.acker.ack().await
     }
 
-    /// Explicitly does not Acknowledge the successful processing of this [`Delivery`]. The exact
-    /// nature of this will vary by backend, but usually it ensures that the same message is either
-    /// reinserted into the same queue or is sent to a separate collection.
+    /// Explicitly does not Acknowledge the successful processing of this [`Delivery`].
+    ///
+    /// The exact nature of this will vary by backend, but usually it ensures that the same message
+    /// is either reinserted into the same queue or is sent to a separate collection.
     pub async fn nack(mut self) -> Result<(), QueueError> {
         self.acker.nack().await
     }
 
-    /// This method will deserialize the contained bytes using the configured decoder. If a decoder
-    /// does not exist for the type parameter T, this function will return an error.
+    /// This method will deserialize the contained bytes using the configured decoder.
+    ///
+    /// If a decoder does not exist for the type parameter T, this function will return an error.
     ///
     /// This method does not consume the payload.
     pub fn payload_custom<T: 'static>(&self) -> Result<Option<T>, QueueError> {
