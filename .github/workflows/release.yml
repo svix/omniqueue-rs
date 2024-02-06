@@ -1,5 +1,8 @@
 name: Release
 
+env:
+  CARGO_TERM_COLOR: always
+
 on:
   push:
     tags:
@@ -10,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: Release
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - uses: actions-rs/toolchain@v1
         with:
@@ -19,7 +22,7 @@ jobs:
           profile: minimal
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
 
       - name: Publish
         env:
