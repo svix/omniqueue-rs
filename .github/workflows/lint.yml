@@ -14,41 +14,30 @@ jobs:
       matrix:
         rust: [stable, beta]
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@master
 
-    - uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        override: true
-        profile: minimal
         components: clippy, rustfmt
 
     - uses: Swatinem/rust-cache@v1
 
     - name: Clippy
-      uses: actions-rs/cargo@v1
-      with:
-        command: clippy
-        args: --all --all-targets --all-features -- -D warnings
+      run: cargo clippy --all --all-targets --all-features -- -D warnings
 
     - name: rustfmt
-      uses: actions-rs/cargo@v1
-      with:
-        command: fmt
-        args: --all -- --check
+      run: cargo fmt --all -- --check
 
     - name: Start test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" up -d
 
     - name: Run tests
-      uses: actions-rs/cargo@v1
       env:
         AWS_DEFAULT_REGION: localhost
         AWS_ACCESS_KEY_ID: x
         AWS_SECRET_ACCESS_KEY: x
-      with:
-        command: test
-        args: --all --all-features
+      run: cargo test --all --all-features
 
     - name: Stop test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" down
