@@ -3,15 +3,13 @@ name: Rust Lib Security
 on:
   push:
     branches:
-    - main
+      - main
     paths:
-      - 'omniqueue/Cargo.toml'
-      - 'omniqueue/Cargo.lock'
+      - '**/Cargo.toml'
       - '.github/workflows/rust-security.yml'
   pull_request:
     paths:
-      - 'omniqueue/Cargo.toml'
-      - 'omniqueue/Cargo.lock'
+      - '**/Cargo.toml'
       - '.github/workflows/rust-security.yml'
 
 jobs:
@@ -20,5 +18,3 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - uses: EmbarkStudios/cargo-deny-action@v1
-        with:
-            arguments: --manifest-path=omniqueue/Cargo.toml
