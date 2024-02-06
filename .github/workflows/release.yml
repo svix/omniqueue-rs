@@ -1,5 +1,8 @@
 name: Release
 
+env:
+  CARGO_TERM_COLOR: always
+
 on:
   push:
     tags:
