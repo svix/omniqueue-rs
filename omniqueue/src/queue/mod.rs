@@ -66,18 +66,22 @@ pub struct Delivery {
 impl Delivery {
     /// Acknowledges the receipt and successful processing of this [`Delivery`].
     ///
+    /// On failure, `self` is returned alongside the error to allow retrying.
+    ///
     /// The exact nature of this will vary per backend, but usually it ensures that the same message
     /// is not reprocessed.
-    pub async fn ack(mut self) -> Result<(), QueueError> {
-        self.acker.ack().await
+    pub async fn ack(mut self) -> Result<(), (QueueError, Self)> {
+        self.acker.ack().await.map_err(|e| (e, self))
     }
 
     /// Explicitly does not Acknowledge the successful processing of this [`Delivery`].
     ///
+    /// On failure, `self` is returned alongside the error to allow retrying.
+    ///
     /// The exact nature of this will vary by backend, but usually it ensures that the same message
     /// is either reinserted into the same queue or is sent to a separate collection.
-    pub async fn nack(mut self) -> Result<(), QueueError> {
-        self.acker.nack().await
+    pub async fn nack(mut self) -> Result<(), (QueueError, Self)> {
+        self.acker.nack().await.map_err(|e| (e, self))
     }
 
     /// This method will deserialize the contained bytes using the configured decoder.
