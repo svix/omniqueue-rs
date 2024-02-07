@@ -24,7 +24,7 @@ Omniqueue is still early in development.
 While the exact configuration will depend on the backend used, usage is roughly as follows.
 
 1. Add `omniqueue` to your `Cargo.toml`. All backends are enabled by default including RabbitMQ,
-   Redis (via their stream type), SQS, and an in-memory queue based off of `tokio` broadcast
+   Redis (via their stream type), SQS, and an in-memory queue based off of `tokio`'s mpsc
    channel which is perfect for testing.
 
    If you only need some backends, then simply disable the default features, and enable any backends
