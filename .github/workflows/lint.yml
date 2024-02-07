@@ -44,3 +44,11 @@ jobs:
 
     - name: Stop test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" down
+
+  typos:
+    name: Check for typos
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@v1.18.0
