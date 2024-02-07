@@ -11,11 +11,11 @@ Redis streams, and SQS out of the box. The trait may also be implemented for oth
 your own needs.
 
 Omniqueue provides a high level interface which allows sending and receiving raw byte arrays, any
-`serde` `Deserailize` and `Serialize` implementors via JSON encoded byte arrays, or any arbitrary
+`serde` `Deserialize` and `Serialize` implementors via JSON encoded byte arrays, or any arbitrary
 types for which you have provided an encoding and/or decoding function.
 
 It is designed to be flexible and to be able to adapt to fit your existing queue configurations, but
-with a set of defaults that makes it simple to start seding and reciving quickly.
+with a set of defaults that makes it simple to start sending and receiving quickly.
 
 Omniqueue is still early in development.
 
@@ -24,7 +24,7 @@ Omniqueue is still early in development.
 While the exact configuration will depend on the backend used, usage is roughly as follows.
 
 1. Add `omniqueue` to your `Cargo.toml`. All backends are enabled by default including RabbitMQ,
-   Redis (via their stream type), SQS, and an in-memory queue based off ot `tokio` broadcast
+   Redis (via their stream type), SQS, and an in-memory queue based off of `tokio` broadcast
    channel which is perfect for testing.
 
    If you only need some backends, then simply disable the default features, and enable any backends
