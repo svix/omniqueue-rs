@@ -23,14 +23,14 @@ impl QueueBackend for MemoryQueueBackend {
     type Producer = MemoryQueueProducer;
 
     type Consumer = MemoryQueueConsumer;
-    type Config = usize;
+    type Config = ();
 
     async fn new_pair(
-        config: usize,
+        _config: (),
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
     ) -> Result<(MemoryQueueProducer, MemoryQueueConsumer), QueueError> {
-        let (tx, rx) = mpsc::channel(config);
+        let (tx, rx) = mpsc::unbounded_channel();
 
         Ok((
             MemoryQueueProducer {
@@ -46,14 +46,14 @@ impl QueueBackend for MemoryQueueBackend {
     }
 
     async fn producing_half(
-        _config: usize,
+        _config: (),
         _custom_encoders: EncoderRegistry<Vec<u8>>,
     ) -> Result<MemoryQueueProducer, QueueError> {
         Err(QueueError::CannotCreateHalf)
     }
 
     async fn consuming_half(
-        _config: usize,
+        _config: (),
         _custom_decoders: DecoderRegistry<Vec<u8>>,
     ) -> Result<MemoryQueueConsumer, QueueError> {
         Err(QueueError::CannotCreateHalf)
@@ -62,7 +62,7 @@ impl QueueBackend for MemoryQueueBackend {
 
 pub struct MemoryQueueProducer {
     registry: EncoderRegistry<Vec<u8>>,
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 #[async_trait]
@@ -74,10 +74,7 @@ impl QueueProducer for MemoryQueueProducer {
     }
 
     async fn send_raw(&self, payload: &Self::Payload) -> Result<(), QueueError> {
-        self.tx
-            .send(payload.clone())
-            .await
-            .map_err(QueueError::generic)
+        self.tx.send(payload.clone()).map_err(QueueError::generic)
     }
 
     async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<(), QueueError> {
@@ -98,7 +95,7 @@ impl ScheduledProducer for MemoryQueueProducer {
         tokio::spawn(async move {
             tracing::trace!("MemoryQueue: event sent > (delay: {:?})", delay);
             tokio::time::sleep(delay).await;
-            if tx.send(payload).await.is_err() {
+            if tx.send(payload).is_err() {
                 tracing::error!("Receiver dropped");
             }
         });
@@ -108,8 +105,8 @@ impl ScheduledProducer for MemoryQueueProducer {
 
 pub struct MemoryQueueConsumer {
     registry: DecoderRegistry<Vec<u8>>,
-    rx: mpsc::Receiver<Vec<u8>>,
-    tx: mpsc::Sender<Vec<u8>>,
+    rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl MemoryQueueConsumer {
@@ -167,7 +164,7 @@ impl QueueConsumer for MemoryQueueConsumer {
 }
 
 pub struct MemoryQueueAcker {
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
     payload_copy: Option<Vec<u8>>,
     already_acked_or_nacked: bool,
 }
@@ -194,7 +191,6 @@ impl Acker for MemoryQueueAcker {
                         .take()
                         .ok_or(QueueError::CannotAckOrNackTwice)?,
                 )
-                .await
                 .map_err(QueueError::generic)
         }
     }
@@ -230,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn simple_queue_test() {
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .with_encoder(type_a_to_json)
             .with_decoder(json_to_type_a)
             .build_pair()
@@ -271,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_queue_test() {
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .make_dynamic()
             .with_bytes_encoder(|a: &TypeA| Ok(serde_json::to_vec(a)?))
             .with_bytes_decoder(|b: &Vec<u8>| -> Result<TypeA, QueueError> {
@@ -303,7 +299,7 @@ mod tests {
     async fn test_send_recv_all_partial() {
         let payload = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -326,7 +322,7 @@ mod tests {
         let payload1 = ExType { a: 1 };
         let payload2 = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -362,7 +358,7 @@ mod tests {
         let payload2 = ExType { a: 2 };
         let payload3 = ExType { a: 3 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -406,7 +402,7 @@ mod tests {
     /// Consumer will NOT wait indefinitely for at least one item.
     #[tokio::test]
     async fn test_send_recv_all_late_arriving_items() {
-        let (_p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (_p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -426,7 +422,7 @@ mod tests {
     async fn test_scheduled() {
         let payload1 = ExType { a: 1 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(16)
+        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
