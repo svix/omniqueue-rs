@@ -2,8 +2,7 @@ use std::time::{Duration, Instant};
 use std::{any::TypeId, collections::HashMap};
 
 use async_trait::async_trait;
-use futures::StreamExt;
-use futures_util::FutureExt;
+use futures_util::{FutureExt, StreamExt};
 use lapin::types::AMQPValue;
 pub use lapin::{
     acker::Acker as LapinAcker,

@@ -15,8 +15,7 @@ aws-config = { version = "0.55", optional = true }
 aws-sdk-sqs = { version = "0.25", optional = true }
 bb8 = { version = "0.8", optional = true }
 bb8-redis = { version = "0.13", optional = true }
-futures = { version = "0.3", default-features = false, features = ["async-await", "std"] }
-futures-util = { version = "0.3.28", optional = true }
+futures-util = { version = "0.3.28", default-features = false, features = ["async-await", "std"], optional = true }
 google-cloud-googleapis = { version = "0.10.0", optional = true }
 google-cloud-pubsub = { version = "0.18.0", optional = true }
 lapin = { version = "2", optional = true }
@@ -43,7 +42,7 @@ gcp_pubsub = [
     "dep:tokio-util",
 ]
 memory_queue = []
-rabbitmq = ["dep:lapin"]
+rabbitmq = ["dep:futures-util", "dep:lapin"]
 redis = ["dep:bb8", "dep:bb8-redis", "dep:redis", "dep:svix-ksuid"]
 redis_cluster = ["redis", "redis/cluster-async"]
 sqs = ["dep:aws-config", "dep:aws-sdk-sqs"]
