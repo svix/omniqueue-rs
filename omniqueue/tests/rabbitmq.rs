@@ -1,3 +1,5 @@
+#![cfg(feature = "rabbitmq")]
+
 use lapin::options::ExchangeDeclareOptions;
 use lapin::types::AMQPValue;
 use lapin::{

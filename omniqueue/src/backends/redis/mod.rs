@@ -46,7 +46,9 @@ use crate::{
     QueueError,
 };
 
+#[cfg(feature = "redis_cluster")]
 mod cluster;
+#[cfg(feature = "redis_cluster")]
 use cluster::RedisClusterConnectionManager;
 
 pub trait RedisConnection
@@ -64,6 +66,7 @@ impl RedisConnection for RedisMultiplexedConnectionManager {
     }
 }
 
+#[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
     fn from_dsn(dsn: &str) -> Result<Self, QueueError> {
         Self::new(dsn).map_err(QueueError::generic)
@@ -83,6 +86,7 @@ pub struct RedisConfig {
 }
 
 pub struct RedisQueueBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
+#[cfg(feature = "redis_cluster")]
 pub type RedisClusterQueueBackend = RedisQueueBackend<RedisClusterConnectionManager>;
 
 type RawPayload = Vec<u8>;
