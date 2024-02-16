@@ -23,7 +23,6 @@ pub struct SqsConfig {
 
 pub struct SqsQueueBackend;
 
-#[async_trait]
 impl QueueBackend for SqsQueueBackend {
     type PayloadIn = String;
 
@@ -195,7 +194,6 @@ pub struct SqsQueueProducer {
     queue_dsn: String,
 }
 
-#[async_trait]
 impl QueueProducer for SqsQueueProducer {
     type Payload = String;
 
@@ -216,7 +214,6 @@ impl QueueProducer for SqsQueueProducer {
     }
 }
 
-#[async_trait]
 impl ScheduledProducer for SqsQueueProducer {
     async fn send_raw_scheduled(
         &self,
@@ -257,7 +254,6 @@ impl SqsQueueConsumer {
     }
 }
 
-#[async_trait]
 impl QueueConsumer for SqsQueueConsumer {
     type Payload = String;
 

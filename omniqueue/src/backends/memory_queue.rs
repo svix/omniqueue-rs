@@ -15,7 +15,6 @@ use crate::{
 
 pub struct MemoryQueueBackend;
 
-#[async_trait]
 impl QueueBackend for MemoryQueueBackend {
     type PayloadIn = Vec<u8>;
 
@@ -65,7 +64,6 @@ pub struct MemoryQueueProducer {
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-#[async_trait]
 impl QueueProducer for MemoryQueueProducer {
     type Payload = Vec<u8>;
 
@@ -83,7 +81,6 @@ impl QueueProducer for MemoryQueueProducer {
     }
 }
 
-#[async_trait]
 impl ScheduledProducer for MemoryQueueProducer {
     async fn send_raw_scheduled(
         &self,
@@ -123,7 +120,6 @@ impl MemoryQueueConsumer {
     }
 }
 
-#[async_trait]
 impl QueueConsumer for MemoryQueueConsumer {
     type Payload = Vec<u8>;
 
