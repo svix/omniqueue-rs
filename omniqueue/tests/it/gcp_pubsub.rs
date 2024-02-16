@@ -1,5 +1,3 @@
-#![cfg(feature = "gcp_pubsub")]
-
 //! Support for Google Cloud Pub/Sub.
 //!
 //! In this system subscriptions are like queue bindings to topics.
