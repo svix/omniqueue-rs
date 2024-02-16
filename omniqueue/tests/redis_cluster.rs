@@ -1,3 +1,5 @@
+#![cfg(feature = "redis_cluster")]
+
 use omniqueue::{
     backends::redis::{RedisClusterQueueBackend, RedisConfig},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},

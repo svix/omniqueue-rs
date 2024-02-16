@@ -1,3 +1,5 @@
+#![cfg(feature = "sqs")]
+
 use aws_sdk_sqs::Client;
 use omniqueue::{
     backends::sqs::{SqsConfig, SqsQueueBackend},

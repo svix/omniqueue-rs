@@ -1,3 +1,5 @@
+#![cfg(feature = "redis")]
+
 use omniqueue::{
     backends::redis::{RedisConfig, RedisQueueBackend},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
