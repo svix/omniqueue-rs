@@ -1,85 +1,121 @@
-#![cfg(feature = "redis_cluster")]
-
+use lapin::options::ExchangeDeclareOptions;
+use lapin::types::AMQPValue;
+use lapin::{
+    options::{BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions},
+    types::FieldTable,
+    BasicProperties, Connection, ConnectionProperties, ExchangeKind,
+};
 use omniqueue::{
-    backends::redis::{RedisClusterQueueBackend, RedisConfig},
+    backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
     scheduled::ScheduledProducer,
 };
-use redis::{cluster::ClusterClient, AsyncCommands, Commands};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-const ROOT_URL: &str = "redis://localhost:6380";
+const MQ_URI: &str = "amqp://guest:guest@localhost:5672/%2f";
 
-pub struct RedisStreamDrop(String);
-impl Drop for RedisStreamDrop {
-    fn drop(&mut self) {
-        let client = ClusterClient::new(vec![ROOT_URL]).unwrap();
-        let mut conn = client.get_connection().unwrap();
-        let _: () = conn.del(&self.0).unwrap();
-    }
-}
-
-/// Returns a [`QueueBuilder`] configured to connect to the Redis instance spawned by the file
+/// Returns a [`QueueBuilder`] configured to connect to the RabbitMQ instance spawned by the file
 /// `testing-docker-compose.yaml` in the root of the repository.
 ///
-/// Additionally this will make a temporary stream on that instance for the duration of the test
-/// such as to ensure there is no stealing
-///
-/// This will also return a [`RedisStreamDrop`] to clean up the stream after the test ends.
-async fn make_test_queue() -> (
-    QueueBuilder<RedisClusterQueueBackend, Static>,
-    RedisStreamDrop,
-) {
-    let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
+/// Additionally this will make a temporary queue on that instance for the duration of the test such
+/// as to ensure there is no stealing.w
+async fn make_test_queue(
+    prefetch_count: Option<u16>,
+    reinsert_on_nack: bool,
+) -> QueueBuilder<RabbitMqBackend, Static> {
+    let options = ConnectionProperties::default()
+        .with_connection_name(
+            std::iter::repeat_with(fastrand::alphanumeric)
+                .take(8)
+                .collect::<String>()
+                .into(),
+        )
+        .with_executor(tokio_executor_trait::Tokio::current())
+        .with_reactor(tokio_reactor_trait::Tokio);
+    let connection = Connection::connect(MQ_URI, options.clone()).await.unwrap();
+    let channel = connection.create_channel().await.unwrap();
+
+    let queue_name: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
 
-    let client = ClusterClient::new(vec![ROOT_URL]).unwrap();
-    let mut conn = client.get_async_connection().await.unwrap();
-
-    let _: () = conn
-        .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
+    channel
+        .queue_declare(
+            &queue_name,
+            QueueDeclareOptions {
+                auto_delete: true,
+                ..Default::default()
+            },
+            FieldTable::default(),
+        )
         .await
         .unwrap();
 
-    let config = RedisConfig {
-        dsn: ROOT_URL.to_owned(),
-        max_connections: 8,
-        reinsert_on_nack: false,
-        queue_key: stream_name.clone(),
-        delayed_queue_key: format!("{stream_name}::delay"),
-        consumer_group: "test_cg".to_owned(),
-        consumer_name: "test_cn".to_owned(),
-        payload_key: "payload".to_owned(),
-        ack_deadline_ms: 5_000,
+    const DELAY_EXCHANGE: &str = "later-alligator";
+    let mut args = FieldTable::default();
+    args.insert(
+        "x-delayed-type".into(),
+        AMQPValue::LongString("direct".into()),
+    );
+    channel
+        .exchange_declare(
+            DELAY_EXCHANGE,
+            ExchangeKind::Custom("x-delayed-message".to_string()),
+            ExchangeDeclareOptions {
+                auto_delete: true,
+                ..Default::default()
+            },
+            args,
+        )
+        .await
+        .unwrap();
+    channel
+        .queue_bind(
+            &queue_name,
+            DELAY_EXCHANGE,
+            &queue_name,
+            Default::default(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+    let config = RabbitMqConfig {
+        uri: MQ_URI.to_owned(),
+        connection_properties: options,
+        publish_exchange: DELAY_EXCHANGE.to_string(),
+        publish_routing_key: queue_name.clone(),
+        publish_options: BasicPublishOptions::default(),
+        publish_properties: BasicProperties::default(),
+        consume_queue: queue_name,
+        consumer_tag: "test".to_owned(),
+        consume_options: BasicConsumeOptions::default(),
+        consume_arguments: FieldTable::default(),
+        consume_prefetch_count: prefetch_count,
+        requeue_on_nack: reinsert_on_nack,
     };
 
-    (
-        RedisClusterQueueBackend::builder(config),
-        RedisStreamDrop(stream_name),
-    )
-}
-
-#[tokio::test]
-async fn test_raw_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
-    let payload = b"{\"test\": \"data\"}";
-    let (p, mut c) = builder.build_pair().await.unwrap();
-
-    p.send_raw(&payload.to_vec()).await.unwrap();
-
-    let d = c.receive().await.unwrap();
-    assert_eq!(d.borrow_payload().unwrap(), payload);
+    RabbitMqBackend::builder(config)
 }
 
 #[tokio::test]
 async fn test_bytes_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
     let payload = b"hello";
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     p.send_bytes(payload).await.unwrap();
+
+    let d = c.receive().await.unwrap();
+    assert_eq!(d.borrow_payload().unwrap(), payload);
+    d.ack().await.unwrap();
+
+    // The RabbitMQ native payload type is a Vec<u8>, so we can also send raw
+    p.send_raw(&payload.to_vec()).await.unwrap();
 
     let d = c.receive().await.unwrap();
     assert_eq!(d.borrow_payload().unwrap(), payload);
@@ -93,9 +129,12 @@ pub struct ExType {
 
 #[tokio::test]
 async fn test_serde_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
     let payload = ExType { a: 2 };
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -106,7 +145,6 @@ async fn test_serde_send_recv() {
 
 #[tokio::test]
 async fn test_custom_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
     let payload = ExType { a: 3 };
 
     let encoder = |p: &ExType| Ok(vec![p.a]);
@@ -116,7 +154,8 @@ async fn test_custom_send_recv() {
         })
     };
 
-    let (p, mut c) = builder
+    let (p, mut c) = make_test_queue(None, false)
+        .await
         .with_encoder(encoder)
         .with_decoder(decoder)
         .build_pair()
@@ -136,10 +175,12 @@ async fn test_custom_send_recv() {
 /// Consumer will return immediately if there are fewer than max messages to start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
-    let (builder, _drop) = make_test_queue().await;
-
     let payload = ExType { a: 2 };
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
     let deadline = Duration::from_secs(1);
@@ -158,13 +199,18 @@ async fn test_send_recv_all_partial() {
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
-
-    let (builder, _drop) = make_test_queue().await;
-
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
+
+    // XXX: rabbit's receive_all impl relies on stream items to be in a ready state in order for
+    // them to be batched together. Sleeping to help them settle before we poll.
+    tokio::time::sleep(Duration::from_millis(100)).await;
     let deadline = Duration::from_secs(1);
 
     let now = Instant::now();
@@ -193,14 +239,19 @@ async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
     let payload3 = ExType { a: 3 };
-
-    let (builder, _drop) = make_test_queue().await;
-
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
     p.send_serde_json(&payload3).await.unwrap();
+
+    // XXX: rabbit's receive_all impl relies on stream items to be in a ready state in order for
+    // them to be batched together. Sleeping to help them settle before we poll.
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let deadline = Duration::from_secs(1);
     let now1 = Instant::now();
@@ -231,15 +282,17 @@ async fn test_send_recv_all_full_then_partial() {
         payload3
     );
     d3.ack().await.unwrap();
-    assert!(now2.elapsed() < deadline);
+    assert!(now2.elapsed() <= deadline);
 }
 
 /// Consumer will NOT wait indefinitely for at least one item.
 #[tokio::test]
 async fn test_send_recv_all_late_arriving_items() {
-    let (builder, _drop) = make_test_queue().await;
-
-    let (_p, mut c) = builder.build_pair().await.unwrap();
+    let (_p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     let deadline = Duration::from_secs(1);
     let now = Instant::now();
@@ -255,9 +308,11 @@ async fn test_send_recv_all_late_arriving_items() {
 #[tokio::test]
 async fn test_scheduled() {
     let payload1 = ExType { a: 1 };
-
-    let (builder, _drop) = make_test_queue().await;
-    let (p, mut c) = builder.build_pair().await.unwrap();
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
 
     let delay = Duration::from_secs(3);
     let now = Instant::now();
@@ -272,51 +327,4 @@ async fn test_scheduled() {
     assert!(now.elapsed() >= delay);
     assert!(now.elapsed() < delay * 2);
     assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
-}
-
-#[tokio::test]
-async fn test_pending() {
-    let payload1 = ExType { a: 1 };
-    let payload2 = ExType { a: 2 };
-    let (builder, _drop) = make_test_queue().await;
-
-    let (p, mut c) = builder.build_pair().await.unwrap();
-
-    p.send_serde_json(&payload1).await.unwrap();
-    p.send_serde_json(&payload2).await.unwrap();
-    let delivery1 = c.receive().await.unwrap();
-    let delivery2 = c.receive().await.unwrap();
-
-    // All items claimed, but not yet ack'd. There shouldn't be anything available yet.
-    assert!(c
-        .receive_all(1, Duration::from_millis(1))
-        .await
-        .unwrap()
-        .is_empty());
-
-    assert_eq!(
-        Some(&payload1),
-        delivery1.payload_serde_json().unwrap().as_ref()
-    );
-    assert_eq!(
-        Some(&payload2),
-        delivery2.payload_serde_json().unwrap().as_ref()
-    );
-
-    // ack 2, but neglect 1
-    let _ = delivery2.ack().await;
-
-    // After the deadline, the first payload should appear again.
-    let delivery3 = c.receive().await.unwrap();
-    assert_eq!(
-        Some(&payload1),
-        delivery3.payload_serde_json().unwrap().as_ref()
-    );
-
-    // queue should be empty once again
-    assert!(c
-        .receive_all(1, Duration::from_millis(1))
-        .await
-        .unwrap()
-        .is_empty());
 }
