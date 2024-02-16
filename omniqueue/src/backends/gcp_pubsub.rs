@@ -99,7 +99,6 @@ impl GcpPubSubProducer {
     }
 }
 
-#[async_trait]
 impl QueueBackend for GcpPubSubBackend {
     type Config = GcpPubSubConfig;
 
@@ -152,7 +151,6 @@ impl std::fmt::Debug for GcpPubSubProducer {
     }
 }
 
-#[async_trait]
 impl QueueProducer for GcpPubSubProducer {
     type Payload = Payload;
 
@@ -237,7 +235,6 @@ impl GcpPubSubConsumer {
     }
 }
 
-#[async_trait]
 impl QueueConsumer for GcpPubSubConsumer {
     type Payload = Payload;
 
@@ -271,7 +268,7 @@ impl QueueConsumer for GcpPubSubConsumer {
     }
 }
 
-pub struct GcpPubSubAcker {
+struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,
     subscription_id: Arc<String>,
 }

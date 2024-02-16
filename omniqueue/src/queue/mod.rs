@@ -1,5 +1,4 @@
-use std::fmt;
-use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
+use std::{any::TypeId, collections::HashMap, fmt, future::Future, marker::PhantomData, sync::Arc};
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -21,7 +20,6 @@ pub mod producer;
 /// A marker trait with utility functions meant for the creation of new producers and/or consumers.
 ///
 /// This trait is meant to be implemented on an empty struct representing the backend as a whole.
-#[async_trait]
 pub trait QueueBackend {
     type PayloadIn: QueuePayload;
     type PayloadOut: QueuePayload;
@@ -31,21 +29,21 @@ pub trait QueueBackend {
 
     type Config;
 
-    async fn new_pair(
+    fn new_pair(
         config: Self::Config,
         custom_encoders: EncoderRegistry<Self::PayloadIn>,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> Result<(Self::Producer, Self::Consumer), QueueError>;
+    ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer), QueueError>> + Send;
 
-    async fn producing_half(
+    fn producing_half(
         config: Self::Config,
         custom_encoders: EncoderRegistry<Self::PayloadIn>,
-    ) -> Result<Self::Producer, QueueError>;
+    ) -> impl Future<Output = Result<Self::Producer, QueueError>> + Send;
 
-    async fn consuming_half(
+    fn consuming_half(
         config: Self::Config,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> Result<Self::Consumer, QueueError>;
+    ) -> impl Future<Output = Result<Self::Consumer, QueueError>> + Send;
 
     fn builder(config: Self::Config) -> QueueBuilder<Self, Static>
     where
@@ -132,7 +130,7 @@ impl fmt::Debug for Delivery {
 }
 
 #[async_trait]
-pub trait Acker: Send + Sync {
+pub(crate) trait Acker: Send + Sync {
     async fn ack(&mut self) -> Result<(), QueueError>;
     async fn nack(&mut self) -> Result<(), QueueError>;
 }

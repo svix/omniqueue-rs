@@ -7,8 +7,7 @@
 # Omniqueue
 
 Omniqueue is an abstraction layer over queue backends for Rust. It includes support for RabbitMQ,
-Redis streams, and SQS out of the box. The trait may also be implemented for other backends to meet
-your own needs.
+Redis streams, and SQS.
 
 Omniqueue provides a high level interface which allows sending and receiving raw byte arrays, any
 `serde` `Deserialize` and `Serialize` implementors via JSON encoded byte arrays, or any arbitrary

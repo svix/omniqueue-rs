@@ -23,7 +23,6 @@ pub struct SqsConfig {
 
 pub struct SqsQueueBackend;
 
-#[async_trait]
 impl QueueBackend for SqsQueueBackend {
     type PayloadIn = String;
 
@@ -143,7 +142,7 @@ impl QueueBackend for SqsQueueBackend {
     }
 }
 
-pub struct SqsAcker {
+struct SqsAcker {
     ack_client: Client,
     // FIXME: Cow/Arc this stuff?
     queue_dsn: String,
@@ -195,7 +194,6 @@ pub struct SqsQueueProducer {
     queue_dsn: String,
 }
 
-#[async_trait]
 impl QueueProducer for SqsQueueProducer {
     type Payload = String;
 
@@ -216,7 +214,6 @@ impl QueueProducer for SqsQueueProducer {
     }
 }
 
-#[async_trait]
 impl ScheduledProducer for SqsQueueProducer {
     async fn send_raw_scheduled(
         &self,
@@ -257,7 +254,6 @@ impl SqsQueueConsumer {
     }
 }
 
-#[async_trait]
 impl QueueConsumer for SqsQueueConsumer {
     type Payload = String;
 
@@ -296,11 +292,10 @@ impl QueueConsumer for SqsQueueConsumer {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(out
-            .messages()
+        out.messages()
             .unwrap_or_default()
             .iter()
             .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()
     }
 }

@@ -91,7 +91,6 @@ pub type RedisClusterQueueBackend = RedisQueueBackend<RedisClusterConnectionMana
 
 type RawPayload = Vec<u8>;
 
-#[async_trait]
 impl<R> QueueBackend for RedisQueueBackend<R>
 where
     R: RedisConnection,
@@ -569,7 +568,6 @@ pub struct RedisStreamProducer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<(), QueueError>>>,
 }
 
-#[async_trait]
 impl<M> QueueProducer for RedisStreamProducer<M>
 where
     M: ManageConnection,
@@ -627,7 +625,6 @@ fn from_delayed_queue_key(key: &str) -> Result<RawPayload, QueueError> {
     .map_err(QueueError::generic)
 }
 
-#[async_trait]
 impl<M> ScheduledProducer for RedisStreamProducer<M>
 where
     M: ManageConnection,
@@ -695,7 +692,6 @@ where
     }
 }
 
-#[async_trait]
 impl<M> QueueConsumer for RedisStreamConsumer<M>
 where
     M: ManageConnection,

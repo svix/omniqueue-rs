@@ -88,7 +88,6 @@ async fn producer(
     })
 }
 
-#[async_trait]
 impl QueueBackend for RabbitMqBackend {
     type PayloadIn = Vec<u8>;
 
@@ -121,7 +120,7 @@ impl QueueBackend for RabbitMqBackend {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(producer(&conn, cfg.clone(), custom_encoders).await?)
+        producer(&conn, cfg.clone(), custom_encoders).await
     }
 
     async fn consuming_half(
@@ -132,7 +131,7 @@ impl QueueBackend for RabbitMqBackend {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(consumer(&conn, cfg.clone(), custom_decoders).await?)
+        consumer(&conn, cfg.clone(), custom_decoders).await
     }
 }
 
@@ -145,7 +144,6 @@ pub struct RabbitMqProducer {
     properties: BasicProperties,
 }
 
-#[async_trait]
 impl QueueProducer for RabbitMqProducer {
     type Payload = Vec<u8>;
 
@@ -169,7 +167,6 @@ impl QueueProducer for RabbitMqProducer {
     }
 }
 
-#[async_trait]
 impl ScheduledProducer for RabbitMqProducer {
     async fn send_raw_scheduled(
         &self,
@@ -218,7 +215,6 @@ impl RabbitMqConsumer {
     }
 }
 
-#[async_trait]
 impl QueueConsumer for RabbitMqConsumer {
     type Payload = Vec<u8>;
 
@@ -267,7 +263,7 @@ impl QueueConsumer for RabbitMqConsumer {
     }
 }
 
-pub struct RabbitMqAcker {
+struct RabbitMqAcker {
     acker: Option<LapinAcker>,
     requeue_on_nack: bool,
 }
