@@ -271,7 +271,7 @@ impl QueueConsumer for GcpPubSubConsumer {
     }
 }
 
-pub struct GcpPubSubAcker {
+struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,
     subscription_id: Arc<String>,
 }

@@ -163,7 +163,7 @@ impl QueueConsumer for MemoryQueueConsumer {
     }
 }
 
-pub struct MemoryQueueAcker {
+struct MemoryQueueAcker {
     tx: mpsc::UnboundedSender<Vec<u8>>,
     payload_copy: Option<Vec<u8>>,
     already_acked_or_nacked: bool,

@@ -143,7 +143,7 @@ impl QueueBackend for SqsQueueBackend {
     }
 }
 
-pub struct SqsAcker {
+struct SqsAcker {
     ack_client: Client,
     // FIXME: Cow/Arc this stuff?
     queue_dsn: String,

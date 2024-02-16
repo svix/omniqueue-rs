@@ -267,7 +267,7 @@ impl QueueConsumer for RabbitMqConsumer {
     }
 }
 
-pub struct RabbitMqAcker {
+struct RabbitMqAcker {
     acker: Option<LapinAcker>,
     requeue_on_nack: bool,
 }

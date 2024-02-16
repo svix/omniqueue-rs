@@ -132,7 +132,7 @@ impl fmt::Debug for Delivery {
 }
 
 #[async_trait]
-pub trait Acker: Send + Sync {
+pub(crate) trait Acker: Send + Sync {
     async fn ack(&mut self) -> Result<(), QueueError>;
     async fn nack(&mut self) -> Result<(), QueueError>;
 }
