@@ -292,11 +292,10 @@ impl QueueConsumer for SqsQueueConsumer {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(out
-            .messages()
+        out.messages()
             .unwrap_or_default()
             .iter()
             .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
-            .collect::<Result<Vec<_>, _>>()?)
+            .collect::<Result<Vec<_>, _>>()
     }
 }

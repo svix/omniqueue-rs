@@ -120,7 +120,7 @@ impl QueueBackend for RabbitMqBackend {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(producer(&conn, cfg.clone(), custom_encoders).await?)
+        producer(&conn, cfg.clone(), custom_encoders).await
     }
 
     async fn consuming_half(
@@ -131,7 +131,7 @@ impl QueueBackend for RabbitMqBackend {
             .await
             .map_err(QueueError::generic)?;
 
-        Ok(consumer(&conn, cfg.clone(), custom_decoders).await?)
+        consumer(&conn, cfg.clone(), custom_decoders).await
     }
 }
 
