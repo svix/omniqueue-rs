@@ -143,7 +143,7 @@ impl QueueBuilderState for Static {}
 pub struct Dynamic;
 impl QueueBuilderState for Dynamic {}
 
-pub struct QueueBuilder<Q: 'static + QueueBackend, S: QueueBuilderState> {
+pub struct QueueBuilder<Q: QueueBackend, S: QueueBuilderState> {
     config: Q::Config,
 
     encoders: HashMap<TypeId, Box<dyn CustomEncoder<Q::PayloadIn>>>,
@@ -155,7 +155,7 @@ pub struct QueueBuilder<Q: 'static + QueueBackend, S: QueueBuilderState> {
     _pd: PhantomData<S>,
 }
 
-impl<Q: 'static + QueueBackend> QueueBuilder<Q, Static> {
+impl<Q: QueueBackend> QueueBuilder<Q, Static> {
     pub fn new(config: Q::Config) -> Self {
         Self {
             config,
@@ -167,20 +167,14 @@ impl<Q: 'static + QueueBackend> QueueBuilder<Q, Static> {
         }
     }
 
-    pub fn with_encoder<I: 'static + Send + Sync>(
-        mut self,
-        e: impl IntoCustomEncoder<I, Q::PayloadIn>,
-    ) -> Self {
+    pub fn with_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I, Q::PayloadIn>) -> Self {
         let encoder = e.into();
         self.encoders.insert(TypeId::of::<I>(), encoder);
 
         self
     }
 
-    pub fn with_decoder<O: 'static + Send + Sync>(
-        mut self,
-        d: impl IntoCustomDecoder<Q::PayloadOut, O>,
-    ) -> Self {
+    pub fn with_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<Q::PayloadOut, O>) -> Self {
         let decoder = d.into();
         self.decoders.insert(TypeId::of::<O>(), decoder);
 
@@ -216,21 +210,15 @@ impl<Q: 'static + QueueBackend> QueueBuilder<Q, Static> {
     }
 }
 
-impl<Q: 'static + QueueBackend> QueueBuilder<Q, Dynamic> {
-    pub fn with_bytes_encoder<I: 'static + Send + Sync>(
-        mut self,
-        e: impl IntoCustomEncoder<I, Vec<u8>>,
-    ) -> Self {
+impl<Q: QueueBackend + 'static> QueueBuilder<Q, Dynamic> {
+    pub fn with_bytes_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I, Vec<u8>>) -> Self {
         let encoder = e.into();
         self.encoders_bytes.insert(TypeId::of::<I>(), encoder);
 
         self
     }
 
-    pub fn with_bytes_decoder<O: 'static + Send + Sync>(
-        mut self,
-        d: impl IntoCustomDecoder<Vec<u8>, O>,
-    ) -> Self {
+    pub fn with_bytes_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<Vec<u8>, O>) -> Self {
         let decoder = d.into();
         self.decoders_bytes.insert(TypeId::of::<O>(), decoder);
 

@@ -77,7 +77,7 @@ pub trait ScheduledProducer: QueueProducer {
 
     fn into_dyn_scheduled(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynScheduledProducer
     where
-        Self: Sized,
+        Self: Sized + 'static,
     {
         DynScheduledProducer::new(self, custom_encoders)
     }
@@ -86,7 +86,10 @@ pub trait ScheduledProducer: QueueProducer {
 pub struct DynScheduledProducer(Box<dyn ErasedScheduledProducer>);
 
 impl DynScheduledProducer {
-    fn new(inner: impl ScheduledProducer, custom_encoders: EncoderRegistry<Vec<u8>>) -> Self {
+    fn new(
+        inner: impl ScheduledProducer + 'static,
+        custom_encoders: EncoderRegistry<Vec<u8>>,
+    ) -> Self {
         let dyn_inner = DynScheduledProducerInner {
             inner,
             custom_encoders,
@@ -176,10 +179,10 @@ impl ScheduledProducer for DynScheduledProducer {
         self.0.send_raw_scheduled(payload, delay).await
     }
 
-    fn into_dyn_scheduled(self, _custom_encoders: EncoderRegistry<Vec<u8>>) -> DynScheduledProducer
-    where
-        Self: Sized,
-    {
+    fn into_dyn_scheduled(
+        self,
+        _custom_encoders: EncoderRegistry<Vec<u8>>,
+    ) -> DynScheduledProducer {
         self
     }
 }

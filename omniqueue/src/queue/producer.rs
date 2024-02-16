@@ -12,7 +12,7 @@ use crate::{
     QueueError, QueuePayload,
 };
 
-pub trait QueueProducer: 'static + Send + Sync {
+pub trait QueueProducer: Send + Sync {
     type Payload: QueuePayload;
 
     fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>>;
@@ -42,7 +42,7 @@ pub trait QueueProducer: 'static + Send + Sync {
         }
     }
 
-    fn send_custom<P: 'static + Send + Sync>(
+    fn send_custom<P: Send + Sync + 'static>(
         &self,
         payload: &P,
     ) -> impl Future<Output = Result<(), QueueError>> + Send
@@ -61,7 +61,7 @@ pub trait QueueProducer: 'static + Send + Sync {
 
     fn into_dyn(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer
     where
-        Self: Sized,
+        Self: Sized + 'static,
     {
         DynProducer::new(self, custom_encoders)
     }
@@ -70,7 +70,7 @@ pub trait QueueProducer: 'static + Send + Sync {
 pub struct DynProducer(Box<dyn ErasedQueueProducer>);
 
 impl DynProducer {
-    fn new(inner: impl QueueProducer, custom_encoders: EncoderRegistry<Vec<u8>>) -> Self {
+    fn new(inner: impl QueueProducer + 'static, custom_encoders: EncoderRegistry<Vec<u8>>) -> Self {
         let dyn_inner = DynProducerInner {
             inner,
             custom_encoders,
