@@ -29,6 +29,7 @@ tokio-util = { version = "0.7", optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
+anyhow = "1.0.79"
 fastrand = "1.9"
 tokio-executor-trait = "2.1"
 tokio-reactor-trait = "1.1"

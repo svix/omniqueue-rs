@@ -25,36 +25,53 @@
 //!
 //! ## How to Use Omniqueue
 //!
-//!   Each queue backend has a unique configuration type. One of these configurations is taken
-//!   when constructing the [`queue::QueueBuilder`].
+//! Each queue backend has a unique configuration type. One of these configurations is taken
+//! when constructing the [`queue::QueueBuilder`].
 //!
-//!   To create a simple producer and/or consumer:
+//! To create a simple producer and/or consumer:
 //!
-//!   ```compile_fail
-//!   let cfg = SqsConfig {
-//!       queue_dsn: "http://localhost:9234/queue/queue_name".to_owned(),
-//!       override_endpoint: true,
-//!   };
-//!      
-//!   // Either both producer and consumer
-//!   let (p, mut c) = SqsQueueBackend::builder(cfg.clone()).build_pair().await?;
+//! ```no_run
+//! # async {
+//! use omniqueue::{
+//!     backends::sqs::{SqsConfig, SqsQueueBackend},
+//!     queue::QueueBackend,
+//! };
 //!
-//!   // Or one half
-//!   let p = SqsQueueBackend::builder(cfg.clone()).build_producer().await?;
-//!   let mut c = SqsQueueBackend::builder(cfg).build_consumer().await?;
+//! let cfg = SqsConfig {
+//!     queue_dsn: "http://localhost:9234/queue/queue_name".to_owned(),
+//!     override_endpoint: true,
+//! };
 //!
-//!   (p, c)
-//!   ```
+//! // Either both producer and consumer
+//! let (p, mut c) = SqsQueueBackend::builder(cfg.clone()).build_pair().await?;
 //!
-//!   Sending and receiving information from this queue is simple:
+//! // Or one half
+//! let p = SqsQueueBackend::builder(cfg.clone()).build_producer().await?;
+//! let mut c = SqsQueueBackend::builder(cfg).build_consumer().await?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
 //!
-//!   ```compile_fail
-//!   p.send_serde_json(&ExampleType::default()).await?;
+//! Sending and receiving information from this queue is simple:
 //!
-//!   let delivery = c.receive().await?;
-//!   let payload = delivery.payload_serde_json::<ExampleType>().await?;
-//!   delivery.ack().await?;
-//!   ```
+//! ```no_run
+//! # use omniqueue::{
+//! #     backends::sqs::SqsQueueBackend,
+//! #     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend},
+//! # };
+//! # async {
+//! # #[derive(Default, serde::Deserialize, serde::Serialize)]
+//! # struct ExampleType;
+//! #
+//! # let (p, mut c) = SqsQueueBackend::builder(todo!()).build_pair().await?;
+//! p.send_serde_json(&ExampleType::default()).await?;
+//!
+//! let delivery = c.receive().await?;
+//! let payload = delivery.payload_serde_json::<ExampleType>()?;
+//! delivery.ack().await.map_err(|(e, _)| e)?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
 //!
 //! ## `DynProducer`s and `DynConsumer`s
 //!
@@ -63,11 +80,17 @@
 //!
 //! Making a `DynProducer` or `DynConsumer` is as simple as adding one line to the builder:
 //!
-//! ```compile_fail
+//! ```no_run
+//! # async {
+//! # let cfg = todo!();
+//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, queue::QueueBackend};
+//!
 //! let (p, mut c) = RabbitMqBackend::builder(cfg)
 //!     .make_dynamic()
 //!     .build_pair()
 //!     .await?;
+//! # anyhow::Ok(())
+//! # };
 //! ```
 //!
 //! ## Encoders/Decoders
@@ -81,7 +104,11 @@
 //!
 //! Any function or closure with the right signature may be used as an encoder or decoder.
 //!
-//! ```compile_fail
+//! ```no_run
+//! # async {
+//! # let cfg = todo!();
+//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, queue::QueueBackend, QueueError};
+//!
 //! #[derive(Debug, PartialEq)]
 //! struct ExampleType {
 //!     field: u8,
@@ -96,6 +123,10 @@
 //!             field: *v.first().unwrap_or(&0),
 //!         })
 //!     })
+//!     .build_pair()
+//!     .await?;
+//! # anyhow::Ok(())
+//! # };
 //! ```
 use std::fmt::Debug;
 
