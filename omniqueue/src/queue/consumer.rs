@@ -4,7 +4,7 @@ use crate::{decoding::DecoderRegistry, QueueError, QueuePayload};
 
 use super::Delivery;
 
-pub trait QueueConsumer: Send + Sync {
+pub trait QueueConsumer: Send {
     type Payload: QueuePayload;
 
     fn receive(&mut self) -> impl Future<Output = Result<Delivery, QueueError>> + Send;
@@ -17,7 +17,7 @@ pub trait QueueConsumer: Send + Sync {
 
     fn into_dyn(self, custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer
     where
-        Self: 'static + Sized,
+        Self: Sized + 'static,
     {
         DynConsumer::new(self, custom_decoders)
     }
@@ -35,7 +35,7 @@ impl DynConsumer {
     }
 }
 
-trait ErasedQueueConsumer: Send + Sync {
+trait ErasedQueueConsumer: Send {
     fn receive(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<Delivery, QueueError>> + Send + '_>>;
@@ -111,10 +111,7 @@ impl QueueConsumer for DynConsumer {
         self.0.receive_all(max_messages, deadline).await
     }
 
-    fn into_dyn(self, _custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer
-    where
-        Self: Sized,
-    {
+    fn into_dyn(self, _custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer {
         self
     }
 }

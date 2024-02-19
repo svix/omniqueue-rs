@@ -9,19 +9,21 @@ use crate::QueueError;
 
 pub type DecoderRegistry<T> = Arc<HashMap<TypeId, Arc<dyn CustomDecoder<T>>>>;
 
-pub trait CustomDecoder<P: Send + Sync>: Send + Sync {
+pub trait CustomDecoder<P>: Send + Sync {
     fn item_type(&self) -> TypeId;
     fn decode(&self, payload: &P) -> Result<Box<dyn Any + Send + Sync>, QueueError>;
 }
 
-pub struct CustomDecoderStandardized<P: Send + Sync, F: Fn(&Vec<u8>) -> Result<P, QueueError>> {
+pub struct CustomDecoderStandardized<P, F> {
     decoder: Arc<dyn CustomDecoder<P>>,
     conversion: F,
 }
 
 /// A standardized decoder for `Vec<u8>` payloads
-impl<P: 'static + Send + Sync, F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync>
-    CustomDecoder<Vec<u8>> for CustomDecoderStandardized<P, F>
+impl<P, F> CustomDecoder<Vec<u8>> for CustomDecoderStandardized<P, F>
+where
+    P: 'static,
+    F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync,
 {
     fn item_type(&self) -> TypeId {
         self.decoder.type_id()
@@ -33,8 +35,9 @@ impl<P: 'static + Send + Sync, F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send +
     }
 }
 
-impl<P: Send + Sync, F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync>
-    CustomDecoderStandardized<P, F>
+impl<P, F> CustomDecoderStandardized<P, F>
+where
+    F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync,
 {
     pub fn from_decoder(decoder: Arc<dyn CustomDecoder<P>>, conversion: F) -> Self {
         Self {
@@ -44,26 +47,22 @@ impl<P: Send + Sync, F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync>
     }
 }
 
-pub trait IntoCustomDecoder<I: Send + Sync, O: Send + Sync> {
+pub trait IntoCustomDecoder<I, O> {
     fn into(self) -> Arc<dyn CustomDecoder<I>>;
 }
 
-struct FnDecoder<
-    I: 'static + Send + Sync,
-    O: 'static + Send + Sync,
-    F: 'static + Fn(&I) -> Result<O, QueueError> + Send + Sync,
-> {
+struct FnDecoder<I, O, F> {
     f: F,
 
     _i_pd: PhantomData<I>,
     _o_pd: PhantomData<O>,
 }
 
-impl<
-        I: 'static + Send + Sync,
-        O: 'static + Send + Sync,
-        F: 'static + Fn(&I) -> Result<O, QueueError> + Send + Sync,
-    > CustomDecoder<I> for FnDecoder<I, O, F>
+impl<I, O, F> CustomDecoder<I> for FnDecoder<I, O, F>
+where
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
 {
     fn item_type(&self) -> TypeId {
         TypeId::of::<O>()
@@ -74,11 +73,11 @@ impl<
     }
 }
 
-impl<
-        I: 'static + Send + Sync,
-        O: 'static + Send + Sync,
-        F: 'static + Fn(&I) -> Result<O, QueueError> + Send + Sync,
-    > IntoCustomDecoder<I, O> for F
+impl<I, O, F> IntoCustomDecoder<I, O> for F
+where
+    I: Send + Sync + 'static,
+    O: Send + Sync + 'static,
+    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
 {
     fn into(self) -> Arc<dyn CustomDecoder<I>> {
         Arc::new(FnDecoder {
