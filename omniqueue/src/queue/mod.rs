@@ -143,6 +143,11 @@ impl QueueBuilderState for Static {}
 pub struct Dynamic;
 impl QueueBuilderState for Dynamic {}
 
+/// Queue builder.
+///
+/// Created with
+/// [`MemoryQueueBackend::builder`][crate::backends::memory_queue::MemoryQueueBackend::builder],
+/// [`RedisQueueBackend::builder`][crate::backends::redis::RedisQueueBackend::builder] and so on.
 pub struct QueueBuilder<Q: QueueBackend, S: QueueBuilderState> {
     config: Q::Config,
 
@@ -156,6 +161,11 @@ pub struct QueueBuilder<Q: QueueBackend, S: QueueBuilderState> {
 }
 
 impl<Q: QueueBackend> QueueBuilder<Q, Static> {
+    /// Creates a new queue builder.
+    ///
+    /// This constructor exists primarily as an implementation detail of
+    /// `SomeQueueBackend::builder` associated function, which are the more
+    /// convenient way of creating a queue builder.
     pub fn new(config: Q::Config) -> Self {
         Self {
             config,
