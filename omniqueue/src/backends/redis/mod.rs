@@ -41,7 +41,10 @@ use tokio::task::JoinSet;
 use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{
+        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
+        QueueBuilder, Static,
+    },
     scheduled::ScheduledProducer,
     QueueError,
 };
@@ -90,6 +93,18 @@ pub struct RedisBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
 pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
 
 type RawPayload = Vec<u8>;
+
+impl<R> RedisBackend<R>
+where
+    R: RedisConnection,
+    R::Connection: redis::aio::ConnectionLike + Send + Sync,
+    R::Error: 'static + std::error::Error + Send + Sync,
+{
+    /// Creates a new redis queue builder with the given configuration.
+    pub fn builder(config: RedisConfig) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(config)
+    }
+}
 
 impl<R> QueueBackend for RedisBackend<R>
 where

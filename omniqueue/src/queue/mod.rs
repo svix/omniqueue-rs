@@ -44,13 +44,6 @@ pub trait QueueBackend {
         config: Self::Config,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
     ) -> impl Future<Output = Result<Self::Consumer, QueueError>> + Send;
-
-    fn builder(config: Self::Config) -> QueueBuilder<Self, Static>
-    where
-        Self: Sized,
-    {
-        QueueBuilder::new(config)
-    }
 }
 
 /// The output of queue backends

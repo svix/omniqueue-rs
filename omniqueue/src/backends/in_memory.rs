@@ -8,12 +8,22 @@ use tokio::sync::mpsc;
 use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{
+        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
+        QueueBuilder, Static,
+    },
     scheduled::ScheduledProducer,
     QueueError,
 };
 
 pub struct InMemoryBackend;
+
+impl InMemoryBackend {
+    /// Creates a new in-memory queue builder.
+    pub fn builder() -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(())
+    }
+}
 
 impl QueueBackend for InMemoryBackend {
     type PayloadIn = Vec<u8>;

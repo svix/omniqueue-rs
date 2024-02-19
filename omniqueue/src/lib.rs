@@ -30,10 +30,7 @@
 //!
 //! ```no_run
 //! # async {
-//! use omniqueue::{
-//!     backends::sqs::{SqsConfig, SqsBackend},
-//!     queue::QueueBackend,
-//! };
+//! use omniqueue::backends::sqs::{SqsConfig, SqsBackend};
 //!
 //! let cfg = SqsConfig {
 //!     queue_dsn: "http://localhost:9234/queue/queue_name".to_owned(),
@@ -55,7 +52,7 @@
 //! ```no_run
 //! # use omniqueue::{
 //! #     backends::sqs::SqsBackend,
-//! #     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend},
+//! #     queue::{consumer::QueueConsumer, producer::QueueProducer},
 //! # };
 //! # async {
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -81,7 +78,7 @@
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, queue::QueueBackend};
+//! use omniqueue::backends::rabbitmq::RabbitMqBackend;
 //!
 //! let (p, mut c) = RabbitMqBackend::builder(cfg)
 //!     .make_dynamic()
@@ -105,7 +102,7 @@
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, queue::QueueBackend, QueueError};
+//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, QueueError};
 //!
 //! #[derive(Debug, PartialEq)]
 //! struct ExampleType {

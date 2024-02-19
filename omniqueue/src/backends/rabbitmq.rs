@@ -17,7 +17,10 @@ pub use lapin::{
 use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{
+        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
+        QueueBuilder, Static,
+    },
     scheduled::ScheduledProducer,
     QueueError,
 };
@@ -42,6 +45,13 @@ pub struct RabbitMqConfig {
 }
 
 pub struct RabbitMqBackend;
+
+impl RabbitMqBackend {
+    /// Creates a new RabbitMQ queue builder with the given configuration.
+    pub fn builder(config: RabbitMqConfig) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(config)
+    }
+}
 
 async fn consumer(
     conn: &Connection,
