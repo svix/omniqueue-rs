@@ -3,7 +3,7 @@ use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
 use crate::{
     decoding::{CustomDecoder, IntoCustomDecoder},
     encoding::{CustomEncoder, IntoCustomEncoder},
-    DynConsumer, DynProducer, QueueBackend, QueueConsumer as _, QueueError, QueueProducer as _,
+    DynConsumer, DynProducer, QueueBackend, QueueConsumer as _, QueueProducer as _, Result,
 };
 
 #[non_exhaustive]
@@ -60,7 +60,7 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
         self
     }
 
-    pub async fn build_pair(self) -> Result<(Q::Producer, Q::Consumer), QueueError> {
+    pub async fn build_pair(self) -> Result<(Q::Producer, Q::Consumer)> {
         Q::new_pair(
             self.config,
             Arc::new(self.encoders),
@@ -69,11 +69,11 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
         .await
     }
 
-    pub async fn build_producer(self) -> Result<Q::Producer, QueueError> {
+    pub async fn build_producer(self) -> Result<Q::Producer> {
         Q::producing_half(self.config, Arc::new(self.encoders)).await
     }
 
-    pub async fn build_consumer(self) -> Result<Q::Consumer, QueueError> {
+    pub async fn build_consumer(self) -> Result<Q::Consumer> {
         Q::consuming_half(self.config, Arc::new(self.decoders)).await
     }
 
@@ -104,7 +104,7 @@ impl<Q: QueueBackend + 'static> QueueBuilder<Q, Dynamic> {
         self
     }
 
-    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer), QueueError> {
+    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
         let (p, c) = Q::new_pair(
             self.config,
             Arc::new(self.encoders),
@@ -117,13 +117,13 @@ impl<Q: QueueBackend + 'static> QueueBuilder<Q, Dynamic> {
         ))
     }
 
-    pub async fn build_producer(self) -> Result<DynProducer, QueueError> {
+    pub async fn build_producer(self) -> Result<DynProducer> {
         let p = Q::producing_half(self.config, Arc::new(self.encoders)).await?;
 
         Ok(p.into_dyn(Arc::new(self.encoders_bytes)))
     }
 
-    pub async fn build_consumer(self) -> Result<DynConsumer, QueueError> {
+    pub async fn build_consumer(self) -> Result<DynConsumer> {
         let c = Q::consuming_half(self.config, Arc::new(self.decoders)).await?;
 
         Ok(c.into_dyn(Arc::new(self.decoders_bytes)))

@@ -99,7 +99,7 @@
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::{backends::RabbitMqBackend, QueueError};
+//! use omniqueue::backends::RabbitMqBackend;
 //!
 //! #[derive(Debug, PartialEq)]
 //! struct ExampleType {
@@ -107,10 +107,10 @@
 //! }
 //!
 //! let (p, mut c) = RabbitMqBackend::builder(cfg)
-//!     .with_encoder(|et: &ExampleType| -> Result<Vec<u8>, QueueError> {
+//!     .with_encoder(|et: &ExampleType| -> omniqueue::Result<Vec<u8>> {
 //!         Ok(vec![et.field])
 //!     })
-//!     .with_decoder(|v: &Vec<u8>| -> Result<ExampleType, QueueError> {
+//!     .with_decoder(|v: &Vec<u8>| -> omniqueue::Result<ExampleType> {
 //!         Ok(ExampleType {
 //!             field: *v.first().unwrap_or(&0),
 //!         })
@@ -138,6 +138,10 @@ pub use self::{
     queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},
     scheduled::{DynScheduledQueueProducer, ScheduledQueueProducer},
 };
+
+/// Type alias for std's `Result` with the error type defaulting to omniqueue's
+/// `QueueError`.
+pub type Result<T, E = QueueError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum QueueError {
@@ -172,26 +176,26 @@ impl QueueError {
 }
 
 pub trait QueuePayload: 'static + Send + Sync {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>, QueueError>;
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>, QueueError>;
+    fn to_bytes_naive(&self) -> Result<Vec<u8>>;
+    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>>;
 }
 
 impl QueuePayload for Vec<u8> {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>, QueueError> {
+    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
         Ok(self.clone())
     }
 
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>, QueueError> {
+    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
         Ok(Box::new(bytes.to_owned()))
     }
 }
 
 impl QueuePayload for String {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>, QueueError> {
+    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
         Ok(self.as_bytes().to_owned())
     }
 
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>, QueueError> {
+    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
         Ok(Box::new(
             String::from_utf8(bytes.to_owned()).map_err(QueueError::generic)?,
         ))
@@ -199,11 +203,11 @@ impl QueuePayload for String {
 }
 
 impl QueuePayload for serde_json::Value {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>, QueueError> {
+    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
         serde_json::to_vec(self).map_err(Into::into)
     }
 
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>, QueueError> {
+    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
         serde_json::from_slice(bytes).map_err(Into::into)
     }
 }

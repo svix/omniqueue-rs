@@ -3,7 +3,9 @@ use std::{any::TypeId, fmt, future::Future};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
-use crate::{decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, QueuePayload};
+use crate::{
+    decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, QueuePayload, Result,
+};
 
 mod consumer;
 mod producer;
@@ -30,17 +32,17 @@ pub trait QueueBackend {
         config: Self::Config,
         custom_encoders: EncoderRegistry<Self::PayloadIn>,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer), QueueError>> + Send;
+    ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer)>> + Send;
 
     fn producing_half(
         config: Self::Config,
         custom_encoders: EncoderRegistry<Self::PayloadIn>,
-    ) -> impl Future<Output = Result<Self::Producer, QueueError>> + Send;
+    ) -> impl Future<Output = Result<Self::Producer>> + Send;
 
     fn consuming_half(
         config: Self::Config,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> impl Future<Output = Result<Self::Consumer, QueueError>> + Send;
+    ) -> impl Future<Output = Result<Self::Consumer>> + Send;
 }
 
 /// The output of queue backends
@@ -77,7 +79,7 @@ impl Delivery {
     /// If a decoder does not exist for the type parameter T, this function will return an error.
     ///
     /// This method does not consume the payload.
-    pub fn payload_custom<T: 'static>(&self) -> Result<Option<T>, QueueError> {
+    pub fn payload_custom<T: 'static>(&self) -> Result<Option<T>> {
         let Some(payload) = self.payload.as_ref() else {
             return Ok(None);
         };
@@ -105,7 +107,7 @@ impl Delivery {
         self.payload.as_deref()
     }
 
-    pub fn payload_serde_json<T: DeserializeOwned>(&self) -> Result<Option<T>, QueueError> {
+    pub fn payload_serde_json<T: DeserializeOwned>(&self) -> Result<Option<T>> {
         let Some(bytes) = self.payload.as_ref() else {
             return Ok(None);
         };
@@ -121,6 +123,6 @@ impl fmt::Debug for Delivery {
 
 #[async_trait]
 pub(crate) trait Acker: Send + Sync {
-    async fn ack(&mut self) -> Result<(), QueueError>;
-    async fn nack(&mut self) -> Result<(), QueueError>;
+    async fn ack(&mut self) -> Result<()>;
+    async fn nack(&mut self) -> Result<()>;
 }

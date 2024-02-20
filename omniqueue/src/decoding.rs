@@ -5,13 +5,13 @@ use std::{
     sync::Arc,
 };
 
-use crate::QueueError;
+use crate::Result;
 
 pub type DecoderRegistry<T> = Arc<HashMap<TypeId, Arc<dyn CustomDecoder<T>>>>;
 
 pub trait CustomDecoder<P>: Send + Sync {
     fn item_type(&self) -> TypeId;
-    fn decode(&self, payload: &P) -> Result<Box<dyn Any + Send + Sync>, QueueError>;
+    fn decode(&self, payload: &P) -> Result<Box<dyn Any + Send + Sync>>;
 }
 
 pub struct CustomDecoderStandardized<P, F> {
@@ -23,13 +23,13 @@ pub struct CustomDecoderStandardized<P, F> {
 impl<P, F> CustomDecoder<Vec<u8>> for CustomDecoderStandardized<P, F>
 where
     P: 'static,
-    F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync,
+    F: Fn(&Vec<u8>) -> Result<P> + Send + Sync,
 {
     fn item_type(&self) -> TypeId {
         self.decoder.type_id()
     }
 
-    fn decode(&self, payload: &Vec<u8>) -> Result<Box<dyn Any + Send + Sync>, QueueError> {
+    fn decode(&self, payload: &Vec<u8>) -> Result<Box<dyn Any + Send + Sync>> {
         let converted = (self.conversion)(payload)?;
         self.decoder.decode(&converted)
     }
@@ -37,7 +37,7 @@ where
 
 impl<P, F> CustomDecoderStandardized<P, F>
 where
-    F: Fn(&Vec<u8>) -> Result<P, QueueError> + Send + Sync,
+    F: Fn(&Vec<u8>) -> Result<P> + Send + Sync,
 {
     pub fn from_decoder(decoder: Arc<dyn CustomDecoder<P>>, conversion: F) -> Self {
         Self {
@@ -62,13 +62,13 @@ impl<I, O, F> CustomDecoder<I> for FnDecoder<I, O, F>
 where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
+    F: Fn(&I) -> Result<O> + Send + Sync + 'static,
 {
     fn item_type(&self) -> TypeId {
         TypeId::of::<O>()
     }
 
-    fn decode(&self, payload: &I) -> Result<Box<dyn Any + Send + Sync>, QueueError> {
+    fn decode(&self, payload: &I) -> Result<Box<dyn Any + Send + Sync>> {
         Ok((self.f)(payload).map(Box::new)?)
     }
 }
@@ -77,7 +77,7 @@ impl<I, O, F> IntoCustomDecoder<I, O> for F
 where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
+    F: Fn(&I) -> Result<O> + Send + Sync + 'static,
 {
     fn into(self) -> Arc<dyn CustomDecoder<I>> {
         Arc::new(FnDecoder {

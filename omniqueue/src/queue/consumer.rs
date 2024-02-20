@@ -1,19 +1,19 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
-use crate::{decoding::DecoderRegistry, QueueError, QueuePayload};
+use crate::{decoding::DecoderRegistry, QueueError, QueuePayload, Result};
 
 use super::Delivery;
 
 pub trait QueueConsumer: Send {
     type Payload: QueuePayload;
 
-    fn receive(&mut self) -> impl Future<Output = Result<Delivery, QueueError>> + Send;
+    fn receive(&mut self) -> impl Future<Output = Result<Delivery>> + Send;
 
     fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> impl Future<Output = Result<Vec<Delivery>, QueueError>> + Send;
+    ) -> impl Future<Output = Result<Vec<Delivery>>> + Send;
 
     fn into_dyn(self, custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer
     where
@@ -36,14 +36,12 @@ impl DynConsumer {
 }
 
 trait ErasedQueueConsumer: Send {
-    fn receive(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Delivery, QueueError>> + Send + '_>>;
+    fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>>;
     fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Delivery>, QueueError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Delivery>>> + Send + '_>>;
 }
 
 struct DynConsumerInner<C> {
@@ -52,9 +50,7 @@ struct DynConsumerInner<C> {
 }
 
 impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
-    fn receive(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Delivery, QueueError>> + Send + '_>> {
+    fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>> {
         Box::pin(async move {
             let mut t_payload = self.inner.receive().await?;
             let bytes_payload: Option<Vec<u8>> = match t_payload.payload_custom() {
@@ -75,7 +71,7 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Delivery>, QueueError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Delivery>>> + Send + '_>> {
         Box::pin(async move {
             let xs = self.inner.receive_all(max_messages, deadline).await?;
             let mut out = Vec::with_capacity(xs.len());
@@ -99,7 +95,7 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
 impl QueueConsumer for DynConsumer {
     type Payload = Vec<u8>;
 
-    async fn receive(&mut self) -> Result<Delivery, QueueError> {
+    async fn receive(&mut self) -> Result<Delivery> {
         self.0.receive().await
     }
 
@@ -107,7 +103,7 @@ impl QueueConsumer for DynConsumer {
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Result<Vec<Delivery>, QueueError> {
+    ) -> Result<Vec<Delivery>> {
         self.0.receive_all(max_messages, deadline).await
     }
 

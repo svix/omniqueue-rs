@@ -43,7 +43,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledQueueProducer,
+    QueueError, Result, ScheduledQueueProducer,
 };
 
 #[cfg(feature = "redis_cluster")]
@@ -57,18 +57,18 @@ where
     Self::Connection: redis::aio::ConnectionLike,
     Self::Error: 'static + std::error::Error + Send + Sync,
 {
-    fn from_dsn(dsn: &str) -> Result<Self, QueueError>;
+    fn from_dsn(dsn: &str) -> Result<Self>;
 }
 
 impl RedisConnection for RedisMultiplexedConnectionManager {
-    fn from_dsn(dsn: &str) -> Result<Self, QueueError> {
+    fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
 }
 
 #[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
-    fn from_dsn(dsn: &str) -> Result<Self, QueueError> {
+    fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
 }
@@ -122,7 +122,7 @@ where
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(RedisProducer<R>, RedisConsumer<R>), QueueError> {
+    ) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -167,7 +167,7 @@ where
     async fn producing_half(
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<RedisProducer<R>, QueueError> {
+    ) -> Result<RedisProducer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -200,7 +200,7 @@ where
     async fn consuming_half(
         cfg: RedisConfig,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<RedisConsumer<R>, QueueError> {
+    ) -> Result<RedisConsumer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -246,7 +246,7 @@ async fn start_background_tasks<R>(
     consumer_group: &str,
     consumer_name: &str,
     task_timeout_ms: i64,
-) -> JoinSet<Result<(), QueueError>>
+) -> JoinSet<Result<()>>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -332,7 +332,7 @@ async fn background_task_delayed<R>(
     delayed_queue_name: String,
     delayed_lock: &str,
     payload_key: &str,
-) -> Result<(), QueueError>
+) -> Result<()>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -460,7 +460,7 @@ async fn background_task_pending<R>(
     consumer_group: &str,
     consumer_name: &str,
     pending_duration: i64,
-) -> Result<(), QueueError>
+) -> Result<()>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -544,7 +544,7 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: 'static + std::error::Error + Send + Sync,
 {
-    async fn ack(&mut self) -> Result<(), QueueError> {
+    async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
@@ -560,7 +560,7 @@ where
         Ok(())
     }
 
-    async fn nack(&mut self) -> Result<(), QueueError> {
+    async fn nack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
@@ -577,7 +577,7 @@ pub struct RedisProducer<M: ManageConnection> {
     queue_key: String,
     delayed_queue_key: String,
     payload_key: String,
-    _background_tasks: Arc<JoinSet<Result<(), QueueError>>>,
+    _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
 impl<M> QueueProducer for RedisProducer<M>
@@ -592,7 +592,7 @@ where
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
         redis::Cmd::xadd(
             &self.queue_key,
@@ -617,7 +617,7 @@ fn delayed_key_id() -> String {
 }
 
 /// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_delayed_queue_key(payload: &RawPayload) -> Result<String, QueueError> {
+fn to_delayed_queue_key(payload: &RawPayload) -> Result<String> {
     Ok(format!(
         "{}|{}",
         delayed_key_id(),
@@ -626,7 +626,7 @@ fn to_delayed_queue_key(payload: &RawPayload) -> Result<String, QueueError> {
 }
 
 /// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &str) -> Result<RawPayload, QueueError> {
+fn from_delayed_queue_key(key: &str) -> Result<RawPayload> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
     serde_json::from_str(
@@ -643,11 +643,7 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: 'static + std::error::Error + Send + Sync,
 {
-    async fn send_raw_scheduled(
-        &self,
-        payload: &Self::Payload,
-        delay: Duration,
-    ) -> Result<(), QueueError> {
+    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
         let timestamp: i64 = (std::time::SystemTime::now() + delay)
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(QueueError::generic)?
@@ -676,7 +672,7 @@ pub struct RedisConsumer<M: ManageConnection> {
     consumer_group: String,
     consumer_name: String,
     payload_key: String,
-    _background_tasks: Arc<JoinSet<Result<(), QueueError>>>,
+    _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
 impl<M> RedisConsumer<M>
@@ -685,7 +681,7 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: 'static + std::error::Error + Send + Sync,
 {
-    fn wrap_entry(&self, entry: StreamId) -> Result<Delivery, QueueError> {
+    fn wrap_entry(&self, entry: StreamId) -> Result<Delivery> {
         let entry_id = entry.id.clone();
         let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
         let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
@@ -712,7 +708,7 @@ where
 {
     type Payload = Vec<u8>;
 
-    async fn receive(&mut self) -> Result<Delivery, QueueError> {
+    async fn receive(&mut self) -> Result<Delivery> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
 
         // Ensure an empty vec is never returned
@@ -738,7 +734,7 @@ where
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Result<Vec<Delivery>, QueueError> {
+    ) -> Result<Vec<Delivery>> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
 
         let read_out: StreamReadReply = redis::Cmd::xread_options(

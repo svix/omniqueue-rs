@@ -12,7 +12,7 @@ use crate::{
     decoding::{CustomDecoder, CustomDecoderStandardized, DecoderRegistry},
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledQueueProducer,
+    QueueError, Result, ScheduledQueueProducer,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,7 +43,7 @@ impl QueueBackend for SqsBackend {
         cfg: SqsConfig,
         custom_encoders: EncoderRegistry<String>,
         custom_decoders: DecoderRegistry<String>,
-    ) -> Result<(SqsProducer, SqsConsumer), QueueError> {
+    ) -> Result<(SqsProducer, SqsConsumer)> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -88,7 +88,7 @@ impl QueueBackend for SqsBackend {
     async fn producing_half(
         cfg: SqsConfig,
         custom_encoders: EncoderRegistry<String>,
-    ) -> Result<SqsProducer, QueueError> {
+    ) -> Result<SqsProducer> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -112,7 +112,7 @@ impl QueueBackend for SqsBackend {
     async fn consuming_half(
         cfg: SqsConfig,
         custom_decoders: DecoderRegistry<String>,
-    ) -> Result<SqsConsumer, QueueError> {
+    ) -> Result<SqsConsumer> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -160,7 +160,7 @@ struct SqsAcker {
 
 #[async_trait]
 impl Acker for SqsAcker {
-    async fn ack(&mut self) -> Result<(), QueueError> {
+    async fn ack(&mut self) -> Result<()> {
         if self.has_been_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
@@ -190,7 +190,7 @@ impl Acker for SqsAcker {
         }
     }
 
-    async fn nack(&mut self) -> Result<(), QueueError> {
+    async fn nack(&mut self) -> Result<()> {
         Ok(())
     }
 }
@@ -208,7 +208,7 @@ impl QueueProducer for SqsProducer {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &String) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &String) -> Result<()> {
         self.client
             .send_message()
             .queue_url(&self.queue_dsn)
@@ -222,11 +222,7 @@ impl QueueProducer for SqsProducer {
 }
 
 impl ScheduledQueueProducer for SqsProducer {
-    async fn send_raw_scheduled(
-        &self,
-        payload: &Self::Payload,
-        delay: Duration,
-    ) -> Result<(), QueueError> {
+    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
         self.client
             .send_message()
             .queue_url(&self.queue_dsn)
@@ -264,7 +260,7 @@ impl SqsConsumer {
 impl QueueConsumer for SqsConsumer {
     type Payload = String;
 
-    async fn receive(&mut self) -> Result<Delivery, QueueError> {
+    async fn receive(&mut self) -> Result<Delivery> {
         let out = self
             .client
             .receive_message()
@@ -276,7 +272,7 @@ impl QueueConsumer for SqsConsumer {
 
         out.messages()
             .iter()
-            .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
+            .map(|message| -> Result<Delivery> { Ok(self.wrap_message(message)) })
             .next()
             .ok_or(QueueError::NoData)?
     }
@@ -285,7 +281,7 @@ impl QueueConsumer for SqsConsumer {
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Result<Vec<Delivery>, QueueError> {
+    ) -> Result<Vec<Delivery>> {
         let out = self
             .client
             .receive_message()
@@ -300,7 +296,7 @@ impl QueueConsumer for SqsConsumer {
 
         out.messages()
             .iter()
-            .map(|message| -> Result<Delivery, QueueError> { Ok(self.wrap_message(message)) })
+            .map(|message| -> Result<Delivery> { Ok(self.wrap_message(message)) })
             .collect::<Result<Vec<_>, _>>()
     }
 }

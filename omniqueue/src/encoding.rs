@@ -5,13 +5,13 @@ use std::{
     sync::Arc,
 };
 
-use crate::QueueError;
+use crate::{QueueError, Result};
 
 pub type EncoderRegistry<T> = Arc<HashMap<TypeId, Box<dyn CustomEncoder<T>>>>;
 
 pub trait CustomEncoder<P>: Send + Sync {
     fn item_type(&self) -> TypeId;
-    fn encode(&self, item: &(dyn Any + Send + Sync)) -> Result<Box<P>, QueueError>;
+    fn encode(&self, item: &(dyn Any + Send + Sync)) -> Result<Box<P>>;
 }
 
 pub trait IntoCustomEncoder<I, O> {
@@ -29,13 +29,13 @@ impl<I, O, F> CustomEncoder<O> for FnEncoder<I, O, F>
 where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
+    F: Fn(&I) -> Result<O> + Send + Sync + 'static,
 {
     fn item_type(&self) -> TypeId {
         TypeId::of::<I>()
     }
 
-    fn encode(&self, item: &(dyn Any + Send + Sync)) -> Result<Box<O>, QueueError> {
+    fn encode(&self, item: &(dyn Any + Send + Sync)) -> Result<Box<O>> {
         let item: &I = item.downcast_ref().ok_or(QueueError::AnyError)?;
         (self.f)(item).map(Box::new)
     }
@@ -45,7 +45,7 @@ impl<I, O, F> IntoCustomEncoder<I, O> for F
 where
     I: Send + Sync + 'static,
     O: Send + Sync + 'static,
-    F: Fn(&I) -> Result<O, QueueError> + Send + Sync + 'static,
+    F: Fn(&I) -> Result<O> + Send + Sync + 'static,
 {
     fn into(self) -> Box<dyn CustomEncoder<O>> {
         Box::new(FnEncoder {

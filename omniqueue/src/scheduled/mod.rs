@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     encoding::{CustomEncoder, EncoderRegistry},
     queue::ErasedQueueProducer,
-    QueueError, QueuePayload, QueueProducer,
+    QueueError, QueuePayload, QueueProducer, Result,
 };
 
 pub trait ScheduledQueueProducer: QueueProducer {
@@ -19,13 +19,13 @@ pub trait ScheduledQueueProducer: QueueProducer {
         &self,
         payload: &Self::Payload,
         delay: Duration,
-    ) -> impl Future<Output = Result<(), QueueError>> + Send;
+    ) -> impl Future<Output = Result<()>> + Send;
 
     fn send_bytes_scheduled(
         &self,
         payload: &[u8],
         delay: Duration,
-    ) -> impl Future<Output = Result<(), QueueError>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = Self::Payload::from_bytes_naive(payload)?;
             self.send_raw_scheduled(&payload, delay).await
@@ -36,7 +36,7 @@ pub trait ScheduledQueueProducer: QueueProducer {
         &self,
         payload: &P,
         delay: Duration,
-    ) -> impl Future<Output = Result<(), QueueError>> + Send
+    ) -> impl Future<Output = Result<()>> + Send
     where
         Self: Sized,
     {
@@ -50,7 +50,7 @@ pub trait ScheduledQueueProducer: QueueProducer {
         &self,
         payload: &P,
         delay: Duration,
-    ) -> impl Future<Output = Result<(), QueueError>> + Send
+    ) -> impl Future<Output = Result<()>> + Send
     where
         Self: Sized,
     {
@@ -97,7 +97,7 @@ trait ErasedScheduledQueueProducer: ErasedQueueProducer {
         &'a self,
         payload: &'a Vec<u8>,
         delay: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<(), QueueError>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
 
 struct DynScheduledProducerInner<P> {
@@ -109,7 +109,7 @@ impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInne
     fn send_raw<'a>(
         &'a self,
         payload: &'a Vec<u8>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), QueueError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             // Prioritize a custom encoder that takes a &[u8].
             if let Some(encoder) = self
@@ -135,7 +135,7 @@ impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledPro
         &'a self,
         payload: &'a Vec<u8>,
         delay: Duration,
-    ) -> Pin<Box<dyn Future<Output = Result<(), QueueError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             if let Some(encoder) = self
                 .inner
@@ -154,7 +154,7 @@ impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledPro
 impl QueueProducer for DynScheduledQueueProducer {
     type Payload = Vec<u8>;
 
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
         self.0.send_raw(payload).await
     }
 
@@ -164,11 +164,7 @@ impl QueueProducer for DynScheduledQueueProducer {
 }
 
 impl ScheduledQueueProducer for DynScheduledQueueProducer {
-    async fn send_raw_scheduled(
-        &self,
-        payload: &Vec<u8>,
-        delay: Duration,
-    ) -> Result<(), QueueError> {
+    async fn send_raw_scheduled(&self, payload: &Vec<u8>, delay: Duration) -> Result<()> {
         self.0.send_raw_scheduled(payload, delay).await
     }
 
