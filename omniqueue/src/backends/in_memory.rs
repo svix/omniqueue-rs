@@ -13,30 +13,30 @@ use crate::{
     QueueError,
 };
 
-pub struct MemoryQueueBackend;
+pub struct InMemoryBackend;
 
-impl QueueBackend for MemoryQueueBackend {
+impl QueueBackend for InMemoryBackend {
     type PayloadIn = Vec<u8>;
-
     type PayloadOut = Vec<u8>;
-    type Producer = MemoryQueueProducer;
 
-    type Consumer = MemoryQueueConsumer;
+    type Producer = InMemoryProducer;
+    type Consumer = InMemoryConsumer;
+
     type Config = ();
 
     async fn new_pair(
         _config: (),
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(MemoryQueueProducer, MemoryQueueConsumer), QueueError> {
+    ) -> Result<(InMemoryProducer, InMemoryConsumer), QueueError> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         Ok((
-            MemoryQueueProducer {
+            InMemoryProducer {
                 registry: custom_encoders,
                 tx: tx.clone(),
             },
-            MemoryQueueConsumer {
+            InMemoryConsumer {
                 registry: custom_decoders,
                 tx,
                 rx,
@@ -47,24 +47,24 @@ impl QueueBackend for MemoryQueueBackend {
     async fn producing_half(
         _config: (),
         _custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<MemoryQueueProducer, QueueError> {
+    ) -> Result<InMemoryProducer, QueueError> {
         Err(QueueError::CannotCreateHalf)
     }
 
     async fn consuming_half(
         _config: (),
         _custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<MemoryQueueConsumer, QueueError> {
+    ) -> Result<InMemoryConsumer, QueueError> {
         Err(QueueError::CannotCreateHalf)
     }
 }
 
-pub struct MemoryQueueProducer {
+pub struct InMemoryProducer {
     registry: EncoderRegistry<Vec<u8>>,
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-impl QueueProducer for MemoryQueueProducer {
+impl QueueProducer for InMemoryProducer {
     type Payload = Vec<u8>;
 
     fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
@@ -81,7 +81,7 @@ impl QueueProducer for MemoryQueueProducer {
     }
 }
 
-impl ScheduledProducer for MemoryQueueProducer {
+impl ScheduledProducer for InMemoryProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,
@@ -100,18 +100,18 @@ impl ScheduledProducer for MemoryQueueProducer {
     }
 }
 
-pub struct MemoryQueueConsumer {
+pub struct InMemoryConsumer {
     registry: DecoderRegistry<Vec<u8>>,
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-impl MemoryQueueConsumer {
+impl InMemoryConsumer {
     fn wrap_payload(&self, payload: Vec<u8>) -> Delivery {
         Delivery {
             payload: Some(payload.clone()),
             decoders: self.registry.clone(),
-            acker: Box::new(MemoryQueueAcker {
+            acker: Box::new(InMemoryAcker {
                 tx: self.tx.clone(),
                 payload_copy: Some(payload),
                 already_acked_or_nacked: false,
@@ -120,7 +120,7 @@ impl MemoryQueueConsumer {
     }
 }
 
-impl QueueConsumer for MemoryQueueConsumer {
+impl QueueConsumer for InMemoryConsumer {
     type Payload = Vec<u8>;
 
     async fn receive(&mut self) -> Result<Delivery, QueueError> {
@@ -159,14 +159,14 @@ impl QueueConsumer for MemoryQueueConsumer {
     }
 }
 
-struct MemoryQueueAcker {
+struct InMemoryAcker {
     tx: mpsc::UnboundedSender<Vec<u8>>,
     payload_copy: Option<Vec<u8>>,
     already_acked_or_nacked: bool,
 }
 
 #[async_trait]
-impl Acker for MemoryQueueAcker {
+impl Acker for InMemoryAcker {
     async fn ack(&mut self) -> Result<(), QueueError> {
         if self.already_acked_or_nacked {
             Err(QueueError::CannotAckOrNackTwice)
@@ -203,7 +203,7 @@ mod tests {
         QueueError,
     };
 
-    use super::MemoryQueueBackend;
+    use super::InMemoryBackend;
 
     #[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
     struct TypeA {
@@ -222,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn simple_queue_test() {
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .with_encoder(type_a_to_json)
             .with_decoder(json_to_type_a)
             .build_pair()
@@ -263,7 +263,7 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_queue_test() {
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .make_dynamic()
             .with_bytes_encoder(|a: &TypeA| Ok(serde_json::to_vec(a)?))
             .with_bytes_decoder(|b: &Vec<u8>| -> Result<TypeA, QueueError> {
@@ -295,7 +295,7 @@ mod tests {
     async fn test_send_recv_all_partial() {
         let payload = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -318,7 +318,7 @@ mod tests {
         let payload1 = ExType { a: 1 };
         let payload2 = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -354,7 +354,7 @@ mod tests {
         let payload2 = ExType { a: 2 };
         let payload3 = ExType { a: 3 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -398,7 +398,7 @@ mod tests {
     /// Consumer will NOT wait indefinitely for at least one item.
     #[tokio::test]
     async fn test_send_recv_all_late_arriving_items() {
-        let (_p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (_p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();
@@ -418,7 +418,7 @@ mod tests {
     async fn test_scheduled() {
         let payload1 = ExType { a: 1 };
 
-        let (p, mut c) = QueueBuilder::<MemoryQueueBackend, _>::new(())
+        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .build_pair()
             .await
             .unwrap();

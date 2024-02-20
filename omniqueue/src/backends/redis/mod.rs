@@ -49,7 +49,7 @@ use crate::{
 #[cfg(feature = "redis_cluster")]
 mod cluster;
 #[cfg(feature = "redis_cluster")]
-use cluster::RedisClusterConnectionManager;
+pub use cluster::RedisClusterConnectionManager;
 
 pub trait RedisConnection
 where
@@ -85,13 +85,13 @@ pub struct RedisConfig {
     pub ack_deadline_ms: i64,
 }
 
-pub struct RedisQueueBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
+pub struct RedisBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
 #[cfg(feature = "redis_cluster")]
-pub type RedisClusterQueueBackend = RedisQueueBackend<RedisClusterConnectionManager>;
+pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
 
 type RawPayload = Vec<u8>;
 
-impl<R> QueueBackend for RedisQueueBackend<R>
+impl<R> QueueBackend for RedisBackend<R>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -99,18 +99,18 @@ where
 {
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = RawPayload;
-
     type PayloadOut = RawPayload;
-    type Producer = RedisStreamProducer<R>;
 
-    type Consumer = RedisStreamConsumer<R>;
+    type Producer = RedisProducer<R>;
+    type Consumer = RedisConsumer<R>;
+
     type Config = RedisConfig;
 
     async fn new_pair(
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(RedisStreamProducer<R>, RedisStreamConsumer<R>), QueueError> {
+    ) -> Result<(RedisProducer<R>, RedisConsumer<R>), QueueError> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -132,7 +132,7 @@ where
         );
 
         Ok((
-            RedisStreamProducer {
+            RedisProducer {
                 registry: custom_encoders,
                 redis: redis.clone(),
                 queue_key: cfg.queue_key.clone(),
@@ -140,7 +140,7 @@ where
                 payload_key: cfg.payload_key.clone(),
                 _background_tasks: background_tasks.clone(),
             },
-            RedisStreamConsumer {
+            RedisConsumer {
                 registry: custom_decoders,
                 redis,
                 queue_key: cfg.queue_key,
@@ -155,7 +155,7 @@ where
     async fn producing_half(
         cfg: RedisConfig,
         custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<RedisStreamProducer<R>, QueueError> {
+    ) -> Result<RedisProducer<R>, QueueError> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -175,7 +175,7 @@ where
             )
             .await,
         );
-        Ok(RedisStreamProducer {
+        Ok(RedisProducer {
             registry: custom_encoders,
             redis,
             queue_key: cfg.queue_key,
@@ -188,7 +188,7 @@ where
     async fn consuming_half(
         cfg: RedisConfig,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<RedisStreamConsumer<R>, QueueError> {
+    ) -> Result<RedisConsumer<R>, QueueError> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -209,7 +209,7 @@ where
             .await,
         );
 
-        Ok(RedisStreamConsumer {
+        Ok(RedisConsumer {
             registry: custom_decoders,
             redis,
             queue_key: cfg.queue_key,
@@ -256,7 +256,7 @@ where
             let payload_key = payload_key.to_string();
             tracing::debug!(
                 "spawning delayed task scheduler: delayed_queue_key=`{delayed_queue_key}`, \
-            delayed_lock=`{delayed_lock}`"
+                 delayed_lock=`{delayed_lock}`"
             );
 
             async move {
@@ -516,7 +516,7 @@ where
     Ok(())
 }
 
-pub struct RedisStreamAcker<M: ManageConnection> {
+struct RedisAcker<M: ManageConnection> {
     redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
@@ -526,7 +526,7 @@ pub struct RedisStreamAcker<M: ManageConnection> {
 }
 
 #[async_trait]
-impl<M> Acker for RedisStreamAcker<M>
+impl<M> Acker for RedisAcker<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -559,7 +559,7 @@ where
     }
 }
 
-pub struct RedisStreamProducer<M: ManageConnection> {
+pub struct RedisProducer<M: ManageConnection> {
     registry: EncoderRegistry<Vec<u8>>,
     redis: bb8::Pool<M>,
     queue_key: String,
@@ -568,7 +568,7 @@ pub struct RedisStreamProducer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<(), QueueError>>>,
 }
 
-impl<M> QueueProducer for RedisStreamProducer<M>
+impl<M> QueueProducer for RedisProducer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -625,7 +625,7 @@ fn from_delayed_queue_key(key: &str) -> Result<RawPayload, QueueError> {
     .map_err(QueueError::generic)
 }
 
-impl<M> ScheduledProducer for RedisStreamProducer<M>
+impl<M> ScheduledProducer for RedisProducer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -657,7 +657,7 @@ where
     }
 }
 
-pub struct RedisStreamConsumer<M: ManageConnection> {
+pub struct RedisConsumer<M: ManageConnection> {
     registry: DecoderRegistry<Vec<u8>>,
     redis: bb8::Pool<M>,
     queue_key: String,
@@ -667,7 +667,7 @@ pub struct RedisStreamConsumer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<(), QueueError>>>,
 }
 
-impl<M> RedisStreamConsumer<M>
+impl<M> RedisConsumer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -680,7 +680,7 @@ where
 
         Ok(Delivery {
             payload: Some(payload),
-            acker: Box::new(RedisStreamAcker {
+            acker: Box::new(RedisAcker {
                 redis: self.redis.clone(),
                 queue_key: self.queue_key.clone(),
                 consumer_group: self.consumer_group.clone(),
@@ -692,7 +692,7 @@ where
     }
 }
 
-impl<M> QueueConsumer for RedisStreamConsumer<M>
+impl<M> QueueConsumer for RedisConsumer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,

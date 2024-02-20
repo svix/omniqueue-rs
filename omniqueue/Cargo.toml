@@ -37,14 +37,14 @@ tokio-executor-trait = "2.1"
 tokio-reactor-trait = "1.1"
 
 [features]
-default = ["memory_queue", "gcp_pubsub", "rabbitmq", "redis", "redis_cluster", "sqs"]
+default = ["in_memory", "gcp_pubsub", "rabbitmq", "redis", "redis_cluster", "sqs"]
+in_memory = []
 gcp_pubsub = [
     "dep:futures-util",
     "dep:google-cloud-googleapis",
     "dep:google-cloud-pubsub",
     "dep:tokio-util",
 ]
-memory_queue = []
 rabbitmq = ["dep:futures-util", "dep:lapin"]
 redis = ["dep:bb8", "dep:bb8-redis", "dep:redis", "dep:svix-ksuid"]
 redis_cluster = ["redis", "redis/cluster-async"]

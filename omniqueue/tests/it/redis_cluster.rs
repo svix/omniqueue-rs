@@ -1,5 +1,5 @@
 use omniqueue::{
-    backends::redis::{RedisClusterQueueBackend, RedisConfig},
+    backends::redis::{RedisClusterBackend, RedisConfig},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
     scheduled::ScheduledProducer,
 };
@@ -25,10 +25,7 @@ impl Drop for RedisStreamDrop {
 /// such as to ensure there is no stealing
 ///
 /// This will also return a [`RedisStreamDrop`] to clean up the stream after the test ends.
-async fn make_test_queue() -> (
-    QueueBuilder<RedisClusterQueueBackend, Static>,
-    RedisStreamDrop,
-) {
+async fn make_test_queue() -> (QueueBuilder<RedisClusterBackend, Static>, RedisStreamDrop) {
     let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
@@ -54,7 +51,7 @@ async fn make_test_queue() -> (
     };
 
     (
-        RedisClusterQueueBackend::builder(config),
+        RedisClusterBackend::builder(config),
         RedisStreamDrop(stream_name),
     )
 }

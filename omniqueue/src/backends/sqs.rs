@@ -21,22 +21,22 @@ pub struct SqsConfig {
     pub override_endpoint: bool,
 }
 
-pub struct SqsQueueBackend;
+pub struct SqsBackend;
 
-impl QueueBackend for SqsQueueBackend {
+impl QueueBackend for SqsBackend {
     type PayloadIn = String;
-
     type PayloadOut = String;
-    type Producer = SqsQueueProducer;
 
-    type Consumer = SqsQueueConsumer;
+    type Producer = SqsProducer;
+    type Consumer = SqsConsumer;
+
     type Config = SqsConfig;
 
     async fn new_pair(
         cfg: SqsConfig,
         custom_encoders: EncoderRegistry<String>,
         custom_decoders: DecoderRegistry<String>,
-    ) -> Result<(SqsQueueProducer, SqsQueueConsumer), QueueError> {
+    ) -> Result<(SqsProducer, SqsConsumer), QueueError> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -48,7 +48,7 @@ impl QueueBackend for SqsQueueBackend {
 
         let client = Client::new(&aws_cfg);
 
-        let producer = SqsQueueProducer {
+        let producer = SqsProducer {
             registry: custom_encoders,
             client: client.clone(),
             queue_dsn: cfg.queue_dsn.clone(),
@@ -69,7 +69,7 @@ impl QueueBackend for SqsQueueBackend {
                 .collect(),
         );
 
-        let consumer = SqsQueueConsumer {
+        let consumer = SqsConsumer {
             bytes_registry: byte_decoders,
             client,
             queue_dsn: cfg.queue_dsn,
@@ -81,7 +81,7 @@ impl QueueBackend for SqsQueueBackend {
     async fn producing_half(
         cfg: SqsConfig,
         custom_encoders: EncoderRegistry<String>,
-    ) -> Result<SqsQueueProducer, QueueError> {
+    ) -> Result<SqsProducer, QueueError> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -93,7 +93,7 @@ impl QueueBackend for SqsQueueBackend {
 
         let client = Client::new(&aws_cfg);
 
-        let producer = SqsQueueProducer {
+        let producer = SqsProducer {
             registry: custom_encoders,
             client,
             queue_dsn: cfg.queue_dsn,
@@ -105,7 +105,7 @@ impl QueueBackend for SqsQueueBackend {
     async fn consuming_half(
         cfg: SqsConfig,
         custom_decoders: DecoderRegistry<String>,
-    ) -> Result<SqsQueueConsumer, QueueError> {
+    ) -> Result<SqsConsumer, QueueError> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -132,7 +132,7 @@ impl QueueBackend for SqsQueueBackend {
                 .collect(),
         );
 
-        let consumer = SqsQueueConsumer {
+        let consumer = SqsConsumer {
             bytes_registry: byte_decoders,
             client,
             queue_dsn: cfg.queue_dsn,
@@ -188,13 +188,13 @@ impl Acker for SqsAcker {
     }
 }
 
-pub struct SqsQueueProducer {
+pub struct SqsProducer {
     registry: Arc<HashMap<TypeId, Box<dyn CustomEncoder<String>>>>,
     client: Client,
     queue_dsn: String,
 }
 
-impl QueueProducer for SqsQueueProducer {
+impl QueueProducer for SqsProducer {
     type Payload = String;
 
     fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
@@ -214,7 +214,7 @@ impl QueueProducer for SqsQueueProducer {
     }
 }
 
-impl ScheduledProducer for SqsQueueProducer {
+impl ScheduledProducer for SqsProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,
@@ -233,13 +233,13 @@ impl ScheduledProducer for SqsQueueProducer {
     }
 }
 
-pub struct SqsQueueConsumer {
+pub struct SqsConsumer {
     bytes_registry: DecoderRegistry<Vec<u8>>,
     client: Client,
     queue_dsn: String,
 }
 
-impl SqsQueueConsumer {
+impl SqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
         Delivery {
             decoders: self.bytes_registry.clone(),
@@ -254,7 +254,7 @@ impl SqsQueueConsumer {
     }
 }
 
-impl QueueConsumer for SqsQueueConsumer {
+impl QueueConsumer for SqsConsumer {
     type Payload = String;
 
     async fn receive(&mut self) -> Result<Delivery, QueueError> {
