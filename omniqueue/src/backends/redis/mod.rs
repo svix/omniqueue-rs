@@ -42,7 +42,7 @@ use crate::{
     builder::{QueueBuilder, Static},
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
     scheduled::ScheduledProducer,
     QueueError,
 };

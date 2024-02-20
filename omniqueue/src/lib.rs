@@ -50,10 +50,7 @@
 //! Sending and receiving information from this queue is simple:
 //!
 //! ```no_run
-//! # use omniqueue::{
-//! #     backends::sqs::SqsBackend,
-//! #     queue::{consumer::QueueConsumer, producer::QueueProducer},
-//! # };
+//! # use omniqueue::{backends::sqs::SqsBackend, QueueConsumer, QueueProducer};
 //! # async {
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
@@ -133,10 +130,13 @@ pub mod backends;
 pub mod builder;
 pub mod decoding;
 pub mod encoding;
-pub mod queue;
+mod queue;
 pub mod scheduled;
 
-pub use self::builder::QueueBuilder;
+pub use self::{
+    builder::QueueBuilder,
+    queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},
+};
 
 #[derive(Debug, Error)]
 pub enum QueueError {

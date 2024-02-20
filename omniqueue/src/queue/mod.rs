@@ -3,11 +3,16 @@ use std::{any::TypeId, fmt, future::Future};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
-use self::{consumer::QueueConsumer, producer::QueueProducer};
 use crate::{decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, QueuePayload};
 
-pub mod consumer;
-pub mod producer;
+mod consumer;
+mod producer;
+
+pub(crate) use self::producer::ErasedQueueProducer;
+pub use self::{
+    consumer::{DynConsumer, QueueConsumer},
+    producer::{DynProducer, QueueProducer},
+};
 
 /// A marker trait with utility functions meant for the creation of new producers and/or consumers.
 ///

@@ -10,11 +10,8 @@ use serde::Serialize;
 
 use crate::{
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        producer::{ErasedQueueProducer, QueueProducer},
-        QueueBackend,
-    },
-    QueueError, QueuePayload,
+    queue::ErasedQueueProducer,
+    QueueBackend, QueueError, QueuePayload, QueueProducer,
 };
 
 // FIXME(onelson): only used by redis -- is this meant to be called internally or by the caller building the backend?

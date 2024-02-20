@@ -58,8 +58,7 @@ use std::time::{Duration, Instant};
 
 use omniqueue::{
     backends::gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig},
-    queue::{consumer::QueueConsumer, producer::QueueProducer},
-    QueueBuilder,
+    QueueBuilder, QueueConsumer, QueueProducer,
 };
 use serde::{Deserialize, Serialize};
 

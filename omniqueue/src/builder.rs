@@ -3,12 +3,7 @@ use std::{any::TypeId, collections::HashMap, marker::PhantomData, sync::Arc};
 use crate::{
     decoding::{CustomDecoder, IntoCustomDecoder},
     encoding::{CustomEncoder, IntoCustomEncoder},
-    queue::{
-        consumer::{DynConsumer, QueueConsumer as _},
-        producer::{DynProducer, QueueProducer as _},
-        QueueBackend,
-    },
-    QueueError,
+    DynConsumer, DynProducer, QueueBackend, QueueConsumer as _, QueueError, QueueProducer as _,
 };
 
 #[non_exhaustive]
