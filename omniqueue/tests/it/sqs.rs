@@ -1,6 +1,6 @@
 use aws_sdk_sqs::Client;
 use omniqueue::{
-    backends::sqs::{SqsBackend, SqsConfig},
+    backends::{SqsBackend, SqsConfig},
     QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use serde::{Deserialize, Serialize};

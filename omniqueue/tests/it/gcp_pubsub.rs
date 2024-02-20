@@ -57,7 +57,7 @@ use google_cloud_pubsub::subscription::SubscriptionConfig;
 use std::time::{Duration, Instant};
 
 use omniqueue::{
-    backends::gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig},
+    backends::{GcpPubSubBackend, GcpPubSubConfig},
     QueueBuilder, QueueConsumer, QueueProducer,
 };
 use serde::{Deserialize, Serialize};

@@ -6,7 +6,7 @@ use lapin::{
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
 };
 use omniqueue::{
-    backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
+    backends::{RabbitMqBackend, RabbitMqConfig},
     QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use serde::{Deserialize, Serialize};

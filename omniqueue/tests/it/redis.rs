@@ -1,5 +1,5 @@
 use omniqueue::{
-    backends::redis::{RedisBackend, RedisConfig},
+    backends::{RedisBackend, RedisConfig},
     QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use redis::{AsyncCommands, Client, Commands};

@@ -30,7 +30,7 @@
 //!
 //! ```no_run
 //! # async {
-//! use omniqueue::backends::sqs::{SqsConfig, SqsBackend};
+//! use omniqueue::backends::{SqsConfig, SqsBackend};
 //!
 //! let cfg = SqsConfig {
 //!     queue_dsn: "http://localhost:9234/queue/queue_name".to_owned(),
@@ -50,7 +50,7 @@
 //! Sending and receiving information from this queue is simple:
 //!
 //! ```no_run
-//! # use omniqueue::{backends::sqs::SqsBackend, QueueConsumer, QueueProducer};
+//! # use omniqueue::{backends::SqsBackend, QueueConsumer, QueueProducer};
 //! # async {
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
@@ -75,7 +75,7 @@
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::backends::rabbitmq::RabbitMqBackend;
+//! use omniqueue::backends::RabbitMqBackend;
 //!
 //! let (p, mut c) = RabbitMqBackend::builder(cfg)
 //!     .make_dynamic()
@@ -99,7 +99,7 @@
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::{backends::rabbitmq::RabbitMqBackend, QueueError};
+//! use omniqueue::{backends::RabbitMqBackend, QueueError};
 //!
 //! #[derive(Debug, PartialEq)]
 //! struct ExampleType {
