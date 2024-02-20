@@ -58,8 +58,8 @@ use std::time::{Duration, Instant};
 
 use omniqueue::{
     backends::gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig},
-    builder::{QueueBuilder, Static},
     queue::{consumer::QueueConsumer, producer::QueueProducer},
+    QueueBuilder,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,7 +86,7 @@ fn random_chars() -> impl Iterator<Item = char> {
 ///
 /// Additionally this will make a temporary topic/subscription on that instance for the duration of
 /// the test such as to ensure there is no stealing.
-async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend, Static> {
+async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
     let client = get_client().await;
 
     let topic_name: String = "topic-".chars().chain(random_chars().take(8)).collect();

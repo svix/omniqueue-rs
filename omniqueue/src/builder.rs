@@ -22,7 +22,7 @@ pub struct Dynamic;
 /// Created with
 /// [`MemoryQueueBackend::builder`][crate::backends::memory_queue::MemoryQueueBackend::builder],
 /// [`RedisQueueBackend::builder`][crate::backends::redis::RedisQueueBackend::builder] and so on.
-pub struct QueueBuilder<Q: QueueBackend, S> {
+pub struct QueueBuilder<Q: QueueBackend, S = Static> {
     config: Q::Config,
 
     encoders: HashMap<TypeId, Box<dyn CustomEncoder<Q::PayloadIn>>>,
@@ -34,7 +34,7 @@ pub struct QueueBuilder<Q: QueueBackend, S> {
     _pd: PhantomData<S>,
 }
 
-impl<Q: QueueBackend> QueueBuilder<Q, Static> {
+impl<Q: QueueBackend> QueueBuilder<Q> {
     /// Creates a new queue builder.
     ///
     /// This constructor exists primarily as an implementation detail of
