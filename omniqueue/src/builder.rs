@@ -13,9 +13,11 @@ use crate::{
 
 pub trait QueueBuilderState {}
 
+#[non_exhaustive]
 pub struct Static;
 impl QueueBuilderState for Static {}
 
+#[non_exhaustive]
 pub struct Dynamic;
 impl QueueBuilderState for Dynamic {}
 
