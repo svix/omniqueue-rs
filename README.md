@@ -38,7 +38,7 @@ While the exact configuration will depend on the backend used, usage is roughly 
        queue_dsn: "http://localhost:9324/queue/queue_name".to_owned(),
        override_endpoint: true,
    };
-   let (producer, mut consumer) = SqsQueueBackend::builder(cfg).build_pair().await?;
+   let (producer, mut consumer) = SqsBackend::builder(cfg).build_pair().await?;
 
    producer.send_serde_json(&ExampleType::default()).await?;
 
@@ -60,7 +60,7 @@ While the exact configuration will depend on the backend used, usage is roughly 
        queue_dsn: "http://localhost:9324/queue/queue_name".to_owned(),
        override_endpoint: true,
    };
-   let (producer, mut consumer) = SqsQueueBackend::builder(cfg)
+   let (producer, mut consumer) = SqsBackend::builder(cfg)
        .make_dynamic()
        .build_pair()
        .await?;

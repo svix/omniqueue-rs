@@ -1,6 +1,6 @@
 use aws_sdk_sqs::Client;
 use omniqueue::{
-    backends::sqs::{SqsConfig, SqsQueueBackend},
+    backends::sqs::{SqsBackend, SqsConfig},
     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static},
     scheduled::ScheduledProducer,
 };
@@ -19,7 +19,7 @@ const DEFAULT_CFG: [(&str, &str); 3] = [
 ///
 /// Additionally this will make a temporary queue on that instance for the duration of the test such
 /// as to ensure there is no stealing.w
-async fn make_test_queue() -> QueueBuilder<SqsQueueBackend, Static> {
+async fn make_test_queue() -> QueueBuilder<SqsBackend, Static> {
     for (var, val) in &DEFAULT_CFG {
         if std::env::var(var).is_err() {
             std::env::set_var(var, val);
@@ -44,7 +44,7 @@ async fn make_test_queue() -> QueueBuilder<SqsQueueBackend, Static> {
         override_endpoint: true,
     };
 
-    SqsQueueBackend::builder(config)
+    SqsBackend::builder(config)
 }
 
 #[tokio::test]

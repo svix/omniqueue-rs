@@ -31,7 +31,7 @@
 //! ```no_run
 //! # async {
 //! use omniqueue::{
-//!     backends::sqs::{SqsConfig, SqsQueueBackend},
+//!     backends::sqs::{SqsConfig, SqsBackend},
 //!     queue::QueueBackend,
 //! };
 //!
@@ -41,11 +41,11 @@
 //! };
 //!
 //! // Either both producer and consumer
-//! let (p, mut c) = SqsQueueBackend::builder(cfg.clone()).build_pair().await?;
+//! let (p, mut c) = SqsBackend::builder(cfg.clone()).build_pair().await?;
 //!
 //! // Or one half
-//! let p = SqsQueueBackend::builder(cfg.clone()).build_producer().await?;
-//! let mut c = SqsQueueBackend::builder(cfg).build_consumer().await?;
+//! let p = SqsBackend::builder(cfg.clone()).build_producer().await?;
+//! let mut c = SqsBackend::builder(cfg).build_consumer().await?;
 //! # anyhow::Ok(())
 //! # };
 //! ```
@@ -54,14 +54,14 @@
 //!
 //! ```no_run
 //! # use omniqueue::{
-//! #     backends::sqs::SqsQueueBackend,
+//! #     backends::sqs::SqsBackend,
 //! #     queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBackend},
 //! # };
 //! # async {
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
 //! #
-//! # let (p, mut c) = SqsQueueBackend::builder(todo!()).build_pair().await?;
+//! # let (p, mut c) = SqsBackend::builder(todo!()).build_pair().await?;
 //! p.send_serde_json(&ExampleType::default()).await?;
 //!
 //! let delivery = c.receive().await?;
