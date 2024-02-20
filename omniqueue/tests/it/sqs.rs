@@ -1,8 +1,7 @@
 use aws_sdk_sqs::Client;
 use omniqueue::{
-    backends::sqs::{SqsBackend, SqsConfig},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder, Static},
-    scheduled::ScheduledProducer,
+    backends::{SqsBackend, SqsConfig},
+    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -19,7 +18,7 @@ const DEFAULT_CFG: [(&str, &str); 3] = [
 ///
 /// Additionally this will make a temporary queue on that instance for the duration of the test such
 /// as to ensure there is no stealing.w
-async fn make_test_queue() -> QueueBuilder<SqsBackend, Static> {
+async fn make_test_queue() -> QueueBuilder<SqsBackend> {
     for (var, val) in &DEFAULT_CFG {
         if std::env::var(var).is_err() {
             std::env::set_var(var, val);

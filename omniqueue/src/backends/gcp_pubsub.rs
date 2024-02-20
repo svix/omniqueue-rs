@@ -1,11 +1,9 @@
 use crate::{
+    builder::{QueueBuilder, Static},
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
-        QueueBuilder, Static,
-    },
-    QueueError,
+    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
+    QueueError, Result,
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -43,9 +41,7 @@ pub struct GcpPubSubConfig {
 }
 
 /// Make a `ClientConfig` from a `CredentialsFile` on disk.
-async fn configure_client_from_file<P: AsRef<Path>>(
-    cred_file_path: P,
-) -> Result<ClientConfig, QueueError> {
+async fn configure_client_from_file<P: AsRef<Path>>(cred_file_path: P) -> Result<ClientConfig> {
     let bytes = std::fs::read(cred_file_path).map_err(QueueError::generic)?;
     let creds: CredentialsFile = serde_json::from_slice(&bytes).map_err(QueueError::generic)?;
     ClientConfig::default()
@@ -58,14 +54,14 @@ async fn configure_client_from_file<P: AsRef<Path>>(
 /// - setting `GOOGLE_APPLICATION_CREDENTIALS` to the file path to have it loaded automatically
 /// - setting `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the file contents (avoiding the need for a
 ///   file on disk).
-async fn configure_client_from_env() -> Result<ClientConfig, QueueError> {
+async fn configure_client_from_env() -> Result<ClientConfig> {
     ClientConfig::default()
         .with_auth()
         .await
         .map_err(QueueError::generic)
 }
 
-async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client, QueueError> {
+async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
     let config = {
         if let Some(fp) = &cfg.credentials_file {
             tracing::trace!("reading gcp creds from file: {}", fp.display());
@@ -79,11 +75,7 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client, QueueError> {
 }
 
 impl GcpPubSubConsumer {
-    async fn new(
-        client: Client,
-        subscription_id: String,
-        registry: Decoders,
-    ) -> Result<Self, QueueError> {
+    async fn new(client: Client, subscription_id: String, registry: Decoders) -> Result<Self> {
         Ok(Self {
             client,
             registry,
@@ -93,7 +85,7 @@ impl GcpPubSubConsumer {
 }
 
 impl GcpPubSubProducer {
-    async fn new(client: Client, topic_id: String, registry: Encoders) -> Result<Self, QueueError> {
+    async fn new(client: Client, topic_id: String, registry: Encoders) -> Result<Self> {
         let topic = client.topic(&topic_id);
         // Only warn if the topic doesn't exist at this point.
         // If it gets created after the fact, we should be able to still use it when available,
@@ -122,7 +114,7 @@ impl QueueBackend for GcpPubSubBackend {
         config: Self::Config,
         custom_encoders: Encoders,
         custom_decoders: Decoders,
-    ) -> Result<(GcpPubSubProducer, GcpPubSubConsumer), QueueError> {
+    ) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
         let client = get_client(&config).await?;
         Ok((
             GcpPubSubProducer::new(client.clone(), config.topic_id, custom_encoders).await?,
@@ -133,7 +125,7 @@ impl QueueBackend for GcpPubSubBackend {
     async fn producing_half(
         config: Self::Config,
         custom_encoders: EncoderRegistry<Self::PayloadIn>,
-    ) -> Result<GcpPubSubProducer, QueueError> {
+    ) -> Result<GcpPubSubProducer> {
         let client = get_client(&config).await?;
         GcpPubSubProducer::new(client, config.topic_id, custom_encoders).await
     }
@@ -141,7 +133,7 @@ impl QueueBackend for GcpPubSubBackend {
     async fn consuming_half(
         config: Self::Config,
         custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> Result<GcpPubSubConsumer, QueueError> {
+    ) -> Result<GcpPubSubConsumer> {
         let client = get_client(&config).await?;
         GcpPubSubConsumer::new(client, config.subscription_id, custom_decoders).await
     }
@@ -168,7 +160,7 @@ impl QueueProducer for GcpPubSubProducer {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
         let msg = PubsubMessage {
             data: payload.to_vec(),
             ..Default::default()
@@ -194,7 +186,7 @@ impl QueueProducer for GcpPubSubProducer {
         Ok(())
     }
 
-    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<(), QueueError> {
+    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
         self.send_raw(&serde_json::to_vec(&payload)?).await
     }
 }
@@ -212,7 +204,7 @@ impl std::fmt::Debug for GcpPubSubConsumer {
     }
 }
 
-async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscription, QueueError> {
+async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscription> {
     let subscription = client.subscription(subscription_id);
     if !subscription
         .exists(None)
@@ -248,7 +240,7 @@ impl GcpPubSubConsumer {
 impl QueueConsumer for GcpPubSubConsumer {
     type Payload = Payload;
 
-    async fn receive(&mut self) -> Result<Delivery, QueueError> {
+    async fn receive(&mut self) -> Result<Delivery> {
         let subscription = subscription(&self.client, &self.subscription_id).await?;
         let mut stream = subscription
             .subscribe(None)
@@ -264,7 +256,7 @@ impl QueueConsumer for GcpPubSubConsumer {
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Result<Vec<Delivery>, QueueError> {
+    ) -> Result<Vec<Delivery>> {
         let subscription = subscription(&self.client, &self.subscription_id).await?;
         match tokio::time::timeout(deadline, subscription.pull(max_messages as _, None)).await {
             Ok(messages) => Ok(messages
@@ -295,11 +287,11 @@ impl std::fmt::Debug for GcpPubSubAcker {
 
 #[async_trait]
 impl Acker for GcpPubSubAcker {
-    async fn ack(&mut self) -> Result<(), QueueError> {
+    async fn ack(&mut self) -> Result<()> {
         self.recv_msg.ack().await.map_err(QueueError::generic)
     }
 
-    async fn nack(&mut self) -> Result<(), QueueError> {
+    async fn nack(&mut self) -> Result<()> {
         self.recv_msg.nack().await.map_err(QueueError::generic)
     }
 }

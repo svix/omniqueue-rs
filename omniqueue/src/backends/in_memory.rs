@@ -6,14 +6,11 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::{
+    builder::{QueueBuilder, Static},
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
-        QueueBuilder, Static,
-    },
-    scheduled::ScheduledProducer,
-    QueueError,
+    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
+    QueueError, Result, ScheduledQueueProducer,
 };
 
 pub struct InMemoryBackend;
@@ -38,7 +35,7 @@ impl QueueBackend for InMemoryBackend {
         _config: (),
         custom_encoders: EncoderRegistry<Vec<u8>>,
         custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(InMemoryProducer, InMemoryConsumer), QueueError> {
+    ) -> Result<(InMemoryProducer, InMemoryConsumer)> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         Ok((
@@ -57,14 +54,14 @@ impl QueueBackend for InMemoryBackend {
     async fn producing_half(
         _config: (),
         _custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<InMemoryProducer, QueueError> {
+    ) -> Result<InMemoryProducer> {
         Err(QueueError::CannotCreateHalf)
     }
 
     async fn consuming_half(
         _config: (),
         _custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<InMemoryConsumer, QueueError> {
+    ) -> Result<InMemoryConsumer> {
         Err(QueueError::CannotCreateHalf)
     }
 }
@@ -81,22 +78,18 @@ impl QueueProducer for InMemoryProducer {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<(), QueueError> {
+    async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
         self.tx.send(payload.clone()).map_err(QueueError::generic)
     }
 
-    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<(), QueueError> {
+    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw(&payload).await
     }
 }
 
-impl ScheduledProducer for InMemoryProducer {
-    async fn send_raw_scheduled(
-        &self,
-        payload: &Self::Payload,
-        delay: Duration,
-    ) -> Result<(), QueueError> {
+impl ScheduledQueueProducer for InMemoryProducer {
+    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
         let tx = self.tx.clone();
         let payload = payload.clone();
         tokio::spawn(async move {
@@ -133,7 +126,7 @@ impl InMemoryConsumer {
 impl QueueConsumer for InMemoryConsumer {
     type Payload = Vec<u8>;
 
-    async fn receive(&mut self) -> Result<Delivery, QueueError> {
+    async fn receive(&mut self) -> Result<Delivery> {
         let payload = self
             .rx
             .recv()
@@ -146,7 +139,7 @@ impl QueueConsumer for InMemoryConsumer {
         &mut self,
         max_messages: usize,
         deadline: Duration,
-    ) -> Result<Vec<Delivery>, QueueError> {
+    ) -> Result<Vec<Delivery>> {
         let mut out = Vec::with_capacity(max_messages);
         let start = Instant::now();
         match tokio::time::timeout(deadline, self.rx.recv()).await {
@@ -177,7 +170,7 @@ struct InMemoryAcker {
 
 #[async_trait]
 impl Acker for InMemoryAcker {
-    async fn ack(&mut self) -> Result<(), QueueError> {
+    async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
             Err(QueueError::CannotAckOrNackTwice)
         } else {
@@ -186,7 +179,7 @@ impl Acker for InMemoryAcker {
         }
     }
 
-    async fn nack(&mut self) -> Result<(), QueueError> {
+    async fn nack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
             Err(QueueError::CannotAckOrNackTwice)
         } else {
@@ -207,11 +200,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
 
-    use crate::{
-        queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder},
-        scheduled::ScheduledProducer,
-        QueueError,
-    };
+    use crate::{QueueBuilder, QueueConsumer, QueueProducer, Result, ScheduledQueueProducer};
 
     use super::InMemoryBackend;
 
@@ -220,13 +209,13 @@ mod tests {
         a: i32,
     }
 
-    fn type_a_to_json(a: &TypeA) -> Result<Vec<u8>, QueueError> {
+    fn type_a_to_json(a: &TypeA) -> Result<Vec<u8>> {
         Ok(serde_json::to_vec(a)?)
     }
 
     /// Unfortunately type restrictions require this for now
     #[allow(clippy::ptr_arg)]
-    fn json_to_type_a(json: &Vec<u8>) -> Result<TypeA, QueueError> {
+    fn json_to_type_a(json: &Vec<u8>) -> Result<TypeA> {
         Ok(serde_json::from_slice(json)?)
     }
 
@@ -276,9 +265,7 @@ mod tests {
         let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
             .make_dynamic()
             .with_bytes_encoder(|a: &TypeA| Ok(serde_json::to_vec(a)?))
-            .with_bytes_decoder(|b: &Vec<u8>| -> Result<TypeA, QueueError> {
-                Ok(serde_json::from_slice(b)?)
-            })
+            .with_bytes_decoder(|b: &Vec<u8>| -> Result<TypeA> { Ok(serde_json::from_slice(b)?) })
             .build_pair()
             .await
             .unwrap();
@@ -296,7 +283,7 @@ mod tests {
     }
 
     #[derive(Debug, Deserialize, Serialize, PartialEq)]
-    pub struct ExType {
+    struct ExType {
         a: u8,
     }
 

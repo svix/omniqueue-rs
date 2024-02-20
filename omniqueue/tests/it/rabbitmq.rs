@@ -6,9 +6,8 @@ use lapin::{
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
 };
 use omniqueue::{
-    backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder, Static},
-    scheduled::ScheduledProducer,
+    backends::{RabbitMqBackend, RabbitMqConfig},
+    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -23,7 +22,7 @@ const MQ_URI: &str = "amqp://guest:guest@localhost:5672/%2f";
 async fn make_test_queue(
     prefetch_count: Option<u16>,
     reinsert_on_nack: bool,
-) -> QueueBuilder<RabbitMqBackend, Static> {
+) -> QueueBuilder<RabbitMqBackend> {
     let options = ConnectionProperties::default()
         .with_connection_name(
             std::iter::repeat_with(fastrand::alphanumeric)
