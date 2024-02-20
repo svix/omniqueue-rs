@@ -131,11 +131,12 @@ pub mod builder;
 pub mod decoding;
 pub mod encoding;
 mod queue;
-pub mod scheduled;
+mod scheduled;
 
 pub use self::{
     builder::QueueBuilder,
     queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},
+    scheduled::{DynScheduledProducer, ScheduledProducer},
 };
 
 #[derive(Debug, Error)]

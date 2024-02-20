@@ -1,8 +1,7 @@
 use aws_sdk_sqs::Client;
 use omniqueue::{
     backends::sqs::{SqsBackend, SqsConfig},
-    scheduled::ScheduledProducer,
-    QueueBuilder, QueueConsumer, QueueProducer,
+    QueueBuilder, QueueConsumer, QueueProducer, ScheduledProducer,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};

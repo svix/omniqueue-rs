@@ -1,7 +1,6 @@
 use omniqueue::{
     backends::redis::{RedisClusterBackend, RedisConfig},
-    scheduled::ScheduledProducer,
-    QueueBuilder, QueueConsumer, QueueProducer,
+    QueueBuilder, QueueConsumer, QueueProducer, ScheduledProducer,
 };
 use redis::{cluster::ClusterClient, AsyncCommands, Commands};
 use serde::{Deserialize, Serialize};

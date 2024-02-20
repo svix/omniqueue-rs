@@ -10,8 +10,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    scheduled::ScheduledProducer,
-    QueueError,
+    QueueError, ScheduledProducer,
 };
 
 pub struct InMemoryBackend;
@@ -205,9 +204,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
 
-    use crate::{
-        scheduled::ScheduledProducer, QueueBuilder, QueueConsumer, QueueError, QueueProducer,
-    };
+    use crate::{QueueBuilder, QueueConsumer, QueueError, QueueProducer, ScheduledProducer};
 
     use super::InMemoryBackend;
 

@@ -43,8 +43,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    scheduled::ScheduledProducer,
-    QueueError,
+    QueueError, ScheduledProducer,
 };
 
 #[cfg(feature = "redis_cluster")]
