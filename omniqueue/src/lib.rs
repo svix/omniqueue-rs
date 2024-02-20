@@ -15,13 +15,11 @@
 //! Each backend is enabled with its associated cargo feature. All backends are enabled by default.
 //! As of present it supports:
 //!
-//!   * In-memory queues
-//!
-//!   * RabbitMQ
-//!
-//!   * Redis streams
-//!
-//!   * SQS
+//! * In-memory queue
+//! * Google Cloud Pub/Sub
+//! * RabbitMQ
+//! * Redis
+//! * Amazon SQS
 //!
 //! ## How to Use Omniqueue
 //!
