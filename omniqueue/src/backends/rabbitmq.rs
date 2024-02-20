@@ -90,11 +90,11 @@ async fn producer(
 
 impl QueueBackend for RabbitMqBackend {
     type PayloadIn = Vec<u8>;
-
     type PayloadOut = Vec<u8>;
-    type Producer = RabbitMqProducer;
 
+    type Producer = RabbitMqProducer;
     type Consumer = RabbitMqConsumer;
+
     type Config = RabbitMqConfig;
 
     async fn new_pair(
