@@ -11,15 +11,8 @@ use serde::Serialize;
 use crate::{
     encoding::{CustomEncoder, EncoderRegistry},
     queue::ErasedQueueProducer,
-    QueueBackend, QueueError, QueuePayload, QueueProducer,
+    QueueError, QueuePayload, QueueProducer,
 };
-
-// FIXME(onelson): only used by redis -- is this meant to be called internally or by the caller building the backend?
-pub trait SchedulerBackend: QueueBackend {
-    fn start_scheduler_background_task(
-        &self,
-    ) -> impl Future<Output = Option<tokio::task::JoinHandle<Result<(), QueueError>>>> + Send;
-}
 
 pub trait ScheduledProducer: QueueProducer {
     fn send_raw_scheduled(
