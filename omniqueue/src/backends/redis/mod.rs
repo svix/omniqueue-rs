@@ -49,7 +49,7 @@ use crate::{
 #[cfg(feature = "redis_cluster")]
 mod cluster;
 #[cfg(feature = "redis_cluster")]
-use cluster::RedisClusterConnectionManager;
+pub use cluster::RedisClusterConnectionManager;
 
 pub trait RedisConnection
 where
@@ -99,11 +99,11 @@ where
 {
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = RawPayload;
-
     type PayloadOut = RawPayload;
-    type Producer = RedisStreamProducer<R>;
 
+    type Producer = RedisStreamProducer<R>;
     type Consumer = RedisStreamConsumer<R>;
+
     type Config = RedisConfig;
 
     async fn new_pair(
@@ -256,7 +256,7 @@ where
             let payload_key = payload_key.to_string();
             tracing::debug!(
                 "spawning delayed task scheduler: delayed_queue_key=`{delayed_queue_key}`, \
-            delayed_lock=`{delayed_lock}`"
+                 delayed_lock=`{delayed_lock}`"
             );
 
             async move {
@@ -516,7 +516,7 @@ where
     Ok(())
 }
 
-pub struct RedisStreamAcker<M: ManageConnection> {
+struct RedisStreamAcker<M: ManageConnection> {
     redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
