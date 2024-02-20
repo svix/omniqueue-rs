@@ -14,7 +14,7 @@ use crate::{
     QueueError, QueuePayload, QueueProducer,
 };
 
-pub trait ScheduledProducer: QueueProducer {
+pub trait ScheduledQueueProducer: QueueProducer {
     fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,
@@ -65,19 +65,22 @@ pub trait ScheduledProducer: QueueProducer {
         }
     }
 
-    fn into_dyn_scheduled(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynScheduledProducer
+    fn into_dyn_scheduled(
+        self,
+        custom_encoders: EncoderRegistry<Vec<u8>>,
+    ) -> DynScheduledQueueProducer
     where
         Self: Sized + 'static,
     {
-        DynScheduledProducer::new(self, custom_encoders)
+        DynScheduledQueueProducer::new(self, custom_encoders)
     }
 }
 
-pub struct DynScheduledProducer(Box<dyn ErasedScheduledProducer>);
+pub struct DynScheduledQueueProducer(Box<dyn ErasedScheduledQueueProducer>);
 
-impl DynScheduledProducer {
+impl DynScheduledQueueProducer {
     fn new(
-        inner: impl ScheduledProducer + 'static,
+        inner: impl ScheduledQueueProducer + 'static,
         custom_encoders: EncoderRegistry<Vec<u8>>,
     ) -> Self {
         let dyn_inner = DynScheduledProducerInner {
@@ -88,7 +91,7 @@ impl DynScheduledProducer {
     }
 }
 
-trait ErasedScheduledProducer: ErasedQueueProducer {
+trait ErasedScheduledQueueProducer: ErasedQueueProducer {
     #[allow(clippy::ptr_arg)] // for now
     fn send_raw_scheduled<'a>(
         &'a self,
@@ -102,7 +105,7 @@ struct DynScheduledProducerInner<P> {
     custom_encoders: EncoderRegistry<Vec<u8>>,
 }
 
-impl<P: ScheduledProducer> ErasedQueueProducer for DynScheduledProducerInner<P> {
+impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInner<P> {
     fn send_raw<'a>(
         &'a self,
         payload: &'a Vec<u8>,
@@ -127,7 +130,7 @@ impl<P: ScheduledProducer> ErasedQueueProducer for DynScheduledProducerInner<P> 
     }
 }
 
-impl<P: ScheduledProducer> ErasedScheduledProducer for DynScheduledProducerInner<P> {
+impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledProducerInner<P> {
     fn send_raw_scheduled<'a>(
         &'a self,
         payload: &'a Vec<u8>,
@@ -148,7 +151,7 @@ impl<P: ScheduledProducer> ErasedScheduledProducer for DynScheduledProducerInner
     }
 }
 
-impl QueueProducer for DynScheduledProducer {
+impl QueueProducer for DynScheduledQueueProducer {
     type Payload = Vec<u8>;
 
     async fn send_raw(&self, payload: &Vec<u8>) -> Result<(), QueueError> {
@@ -160,7 +163,7 @@ impl QueueProducer for DynScheduledProducer {
     }
 }
 
-impl ScheduledProducer for DynScheduledProducer {
+impl ScheduledQueueProducer for DynScheduledQueueProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Vec<u8>,
@@ -172,7 +175,7 @@ impl ScheduledProducer for DynScheduledProducer {
     fn into_dyn_scheduled(
         self,
         _custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> DynScheduledProducer {
+    ) -> DynScheduledQueueProducer {
         self
     }
 }

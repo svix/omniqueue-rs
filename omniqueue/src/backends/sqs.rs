@@ -12,7 +12,7 @@ use crate::{
     decoding::{CustomDecoder, CustomDecoderStandardized, DecoderRegistry},
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledProducer,
+    QueueError, ScheduledQueueProducer,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,7 +221,7 @@ impl QueueProducer for SqsProducer {
     }
 }
 
-impl ScheduledProducer for SqsProducer {
+impl ScheduledQueueProducer for SqsProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,

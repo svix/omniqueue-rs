@@ -19,7 +19,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledProducer,
+    QueueError, ScheduledQueueProducer,
 };
 
 #[derive(Clone)]
@@ -174,7 +174,7 @@ impl QueueProducer for RabbitMqProducer {
     }
 }
 
-impl ScheduledProducer for RabbitMqProducer {
+impl ScheduledQueueProducer for RabbitMqProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,

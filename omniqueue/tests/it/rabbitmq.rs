@@ -7,7 +7,7 @@ use lapin::{
 };
 use omniqueue::{
     backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
-    QueueBuilder, QueueConsumer, QueueProducer, ScheduledProducer,
+    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};

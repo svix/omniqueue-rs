@@ -10,7 +10,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledProducer,
+    QueueError, ScheduledQueueProducer,
 };
 
 pub struct InMemoryBackend;
@@ -88,7 +88,7 @@ impl QueueProducer for InMemoryProducer {
     }
 }
 
-impl ScheduledProducer for InMemoryProducer {
+impl ScheduledQueueProducer for InMemoryProducer {
     async fn send_raw_scheduled(
         &self,
         payload: &Self::Payload,
@@ -204,7 +204,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
 
-    use crate::{QueueBuilder, QueueConsumer, QueueError, QueueProducer, ScheduledProducer};
+    use crate::{QueueBuilder, QueueConsumer, QueueError, QueueProducer, ScheduledQueueProducer};
 
     use super::InMemoryBackend;
 

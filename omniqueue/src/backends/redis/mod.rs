@@ -43,7 +43,7 @@ use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, ScheduledProducer,
+    QueueError, ScheduledQueueProducer,
 };
 
 #[cfg(feature = "redis_cluster")]
@@ -637,7 +637,7 @@ fn from_delayed_queue_key(key: &str) -> Result<RawPayload, QueueError> {
     .map_err(QueueError::generic)
 }
 
-impl<M> ScheduledProducer for RedisProducer<M>
+impl<M> ScheduledQueueProducer for RedisProducer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,

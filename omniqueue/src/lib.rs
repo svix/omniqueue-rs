@@ -136,7 +136,7 @@ mod scheduled;
 pub use self::{
     builder::QueueBuilder,
     queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},
-    scheduled::{DynScheduledProducer, ScheduledProducer},
+    scheduled::{DynScheduledQueueProducer, ScheduledQueueProducer},
 };
 
 #[derive(Debug, Error)]
