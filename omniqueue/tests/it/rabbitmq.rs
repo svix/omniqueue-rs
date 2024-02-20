@@ -7,7 +7,8 @@ use lapin::{
 };
 use omniqueue::{
     backends::rabbitmq::{RabbitMqBackend, RabbitMqConfig},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder, Static},
+    builder::{QueueBuilder, Static},
+    queue::{consumer::QueueConsumer, producer::QueueProducer},
     scheduled::ScheduledProducer,
 };
 use serde::{Deserialize, Serialize};

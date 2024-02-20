@@ -24,7 +24,7 @@
 //! ## How to Use Omniqueue
 //!
 //! Each queue backend has a unique configuration type. One of these configurations is taken
-//! when constructing the [`queue::QueueBuilder`].
+//! when constructing the [`QueueBuilder`].
 //!
 //! To create a simple producer and/or consumer:
 //!
@@ -130,10 +130,13 @@ use std::fmt::Debug;
 use thiserror::Error;
 
 pub mod backends;
+pub mod builder;
 pub mod decoding;
 pub mod encoding;
 pub mod queue;
 pub mod scheduled;
+
+pub use self::builder::QueueBuilder;
 
 #[derive(Debug, Error)]
 pub enum QueueError {

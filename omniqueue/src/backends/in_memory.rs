@@ -6,12 +6,10 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::{
+    builder::{QueueBuilder, Static},
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
-        QueueBuilder, Static,
-    },
+    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
     scheduled::ScheduledProducer,
     QueueError,
 };
@@ -208,9 +206,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::{
-        queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder},
+        queue::{consumer::QueueConsumer, producer::QueueProducer},
         scheduled::ScheduledProducer,
-        QueueError,
+        QueueBuilder, QueueError,
     };
 
     use super::InMemoryBackend;

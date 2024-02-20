@@ -1,10 +1,8 @@
 use crate::{
+    builder::{QueueBuilder, Static},
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
-        QueueBuilder, Static,
-    },
+    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
     QueueError,
 };
 use async_trait::async_trait;

@@ -8,12 +8,10 @@ use aws_sdk_sqs::{
 };
 
 use crate::{
+    builder::{QueueBuilder, Static},
     decoding::{CustomDecoder, CustomDecoderStandardized, DecoderRegistry},
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{
-        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
-        QueueBuilder, Static,
-    },
+    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
     scheduled::ScheduledProducer,
     QueueError,
 };

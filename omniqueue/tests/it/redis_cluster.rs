@@ -1,6 +1,7 @@
 use omniqueue::{
     backends::redis::{RedisClusterBackend, RedisConfig},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder, Static},
+    builder::{QueueBuilder, Static},
+    queue::{consumer::QueueConsumer, producer::QueueProducer},
     scheduled::ScheduledProducer,
 };
 use redis::{cluster::ClusterClient, AsyncCommands, Commands};
