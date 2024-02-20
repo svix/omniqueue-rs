@@ -296,7 +296,7 @@ mod tests {
     }
 
     #[derive(Debug, Deserialize, Serialize, PartialEq)]
-    pub struct ExType {
+    struct ExType {
         a: u8,
     }
 

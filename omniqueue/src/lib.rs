@@ -123,6 +123,8 @@
 //! # anyhow::Ok(())
 //! # };
 //! ```
+#![warn(unreachable_pub)]
+
 use std::fmt::Debug;
 
 use thiserror::Error;
