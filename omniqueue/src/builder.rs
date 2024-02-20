@@ -15,8 +15,9 @@ pub struct Dynamic;
 /// Queue builder.
 ///
 /// Created with
-/// [`MemoryQueueBackend::builder`][crate::backends::memory_queue::MemoryQueueBackend::builder],
-/// [`RedisQueueBackend::builder`][crate::backends::redis::RedisQueueBackend::builder] and so on.
+/// [`MemoryQueueBackend::builder`][crate::backends::InMemoryBackend::builder],
+/// [`RedisQueueBackend::builder`][crate::backends::RedisBackend::builder] and
+/// so on.
 pub struct QueueBuilder<Q: QueueBackend, S = Static> {
     config: Q::Config,
 
