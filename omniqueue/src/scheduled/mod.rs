@@ -176,38 +176,3 @@ impl ScheduledProducer for DynScheduledProducer {
         self
     }
 }
-
-pub struct SplitScheduledProducer<
-    T: QueuePayload,
-    P: QueueProducer<Payload = T>,
-    S: ScheduledProducer<Payload = T>,
-> {
-    unscheduled: P,
-    scheduled: S,
-}
-
-impl<T: QueuePayload, P: QueueProducer<Payload = T>, S: ScheduledProducer<Payload = T>>
-    QueueProducer for SplitScheduledProducer<T, P, S>
-{
-    type Payload = T;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.unscheduled.get_custom_encoders()
-    }
-
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<(), QueueError> {
-        self.unscheduled.send_raw(payload).await
-    }
-}
-
-impl<T: QueuePayload, P: QueueProducer<Payload = T>, S: ScheduledProducer<Payload = T>>
-    ScheduledProducer for SplitScheduledProducer<T, P, S>
-{
-    async fn send_raw_scheduled(
-        &self,
-        payload: &Self::Payload,
-        delay: Duration,
-    ) -> Result<(), QueueError> {
-        self.scheduled.send_raw_scheduled(payload, delay).await
-    }
-}
