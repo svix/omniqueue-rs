@@ -11,22 +11,18 @@ use crate::{
     QueueError,
 };
 
-pub trait QueueBuilderState {}
-
 #[non_exhaustive]
 pub struct Static;
-impl QueueBuilderState for Static {}
 
 #[non_exhaustive]
 pub struct Dynamic;
-impl QueueBuilderState for Dynamic {}
 
 /// Queue builder.
 ///
 /// Created with
 /// [`MemoryQueueBackend::builder`][crate::backends::memory_queue::MemoryQueueBackend::builder],
 /// [`RedisQueueBackend::builder`][crate::backends::redis::RedisQueueBackend::builder] and so on.
-pub struct QueueBuilder<Q: QueueBackend, S: QueueBuilderState> {
+pub struct QueueBuilder<Q: QueueBackend, S> {
     config: Q::Config,
 
     encoders: HashMap<TypeId, Box<dyn CustomEncoder<Q::PayloadIn>>>,
