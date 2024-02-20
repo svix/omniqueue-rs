@@ -57,9 +57,7 @@ use google_cloud_pubsub::subscription::SubscriptionConfig;
 use std::time::{Duration, Instant};
 
 use omniqueue::backends::gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig};
-use omniqueue::queue::{
-    consumer::QueueConsumer, producer::QueueProducer, QueueBackend, QueueBuilder, Static,
-};
+use omniqueue::queue::{consumer::QueueConsumer, producer::QueueProducer, QueueBuilder, Static};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_PUBSUB_EMULATOR_HOST: &str = "localhost:8085";

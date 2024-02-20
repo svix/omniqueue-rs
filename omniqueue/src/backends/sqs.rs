@@ -10,7 +10,10 @@ use aws_sdk_sqs::{
 use crate::{
     decoding::{CustomDecoder, CustomDecoderStandardized, DecoderRegistry},
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{
+        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
+        QueueBuilder, Static,
+    },
     scheduled::ScheduledProducer,
     QueueError,
 };
@@ -22,6 +25,13 @@ pub struct SqsConfig {
 }
 
 pub struct SqsBackend;
+
+impl SqsBackend {
+    /// Creates a new Amazon SQS queue builder with the given configuration.
+    pub fn builder(config: SqsConfig) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(config)
+    }
+}
 
 impl QueueBackend for SqsBackend {
     type PayloadIn = String;

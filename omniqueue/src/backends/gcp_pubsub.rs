@@ -1,7 +1,10 @@
 use crate::{
     decoding::DecoderRegistry,
     encoding::{CustomEncoder, EncoderRegistry},
-    queue::{consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend},
+    queue::{
+        consumer::QueueConsumer, producer::QueueProducer, Acker, Delivery, QueueBackend,
+        QueueBuilder, Static,
+    },
     QueueError,
 };
 use async_trait::async_trait;
@@ -19,6 +22,13 @@ use std::time::Duration;
 use std::{any::TypeId, collections::HashMap};
 
 pub struct GcpPubSubBackend;
+
+impl GcpPubSubBackend {
+    /// Creates a new Google Cloud Pub/Sub queue builder with the given configuration.
+    pub fn builder(config: GcpPubSubConfig) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(config)
+    }
+}
 
 type Payload = Vec<u8>;
 type Encoders = EncoderRegistry<Payload>;
