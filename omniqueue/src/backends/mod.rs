@@ -1,7 +1,7 @@
 #[cfg(feature = "gcp_pubsub")]
 pub mod gcp_pubsub;
-#[cfg(feature = "memory_queue")]
-pub mod memory_queue;
+#[cfg(feature = "in_memory")]
+pub mod in_memory;
 #[cfg(feature = "rabbitmq")]
 pub mod rabbitmq;
 #[cfg(feature = "redis")]
