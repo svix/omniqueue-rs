@@ -51,11 +51,10 @@ mod cluster;
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
 
-pub trait RedisConnection
+pub trait RedisConnection: ManageConnection
 where
-    Self: ManageConnection + Sized,
     Self::Connection: redis::aio::ConnectionLike,
-    Self::Error: 'static + std::error::Error + Send + Sync,
+    Self::Error: std::error::Error + Send + Sync + 'static,
 {
     fn from_dsn(dsn: &str) -> Result<Self>;
 }
@@ -95,7 +94,7 @@ impl<R> RedisBackend<R>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
+    R::Error: std::error::Error + Send + Sync + 'static,
 {
     /// Creates a new redis queue builder with the given configuration.
     pub fn builder(config: RedisConfig) -> QueueBuilder<Self, Static> {
@@ -107,7 +106,7 @@ impl<R> QueueBackend for RedisBackend<R>
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
+    R::Error: std::error::Error + Send + Sync + 'static,
 {
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = RawPayload;
@@ -250,7 +249,7 @@ async fn start_background_tasks<R>(
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
+    R::Error: std::error::Error + Send + Sync + 'static,
 {
     let mut join_set = JoinSet::new();
 
@@ -336,7 +335,7 @@ async fn background_task_delayed<R>(
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
+    R::Error: std::error::Error + Send + Sync + 'static,
 {
     let batch_size: isize = 50;
 
@@ -464,7 +463,7 @@ async fn background_task_pending<R>(
 where
     R: RedisConnection,
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
+    R::Error: std::error::Error + Send + Sync + 'static,
 {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -542,7 +541,7 @@ impl<M> Acker for RedisAcker<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
+    M::Error: std::error::Error + Send + Sync + 'static,
 {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
@@ -584,7 +583,7 @@ impl<M> QueueProducer for RedisProducer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
+    M::Error: std::error::Error + Send + Sync + 'static,
 {
     type Payload = Vec<u8>;
 
@@ -641,7 +640,7 @@ impl<M> ScheduledQueueProducer for RedisProducer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
+    M::Error: std::error::Error + Send + Sync + 'static,
 {
     async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
         let timestamp: i64 = (std::time::SystemTime::now() + delay)
@@ -679,7 +678,7 @@ impl<M> RedisConsumer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
+    M::Error: std::error::Error + Send + Sync + 'static,
 {
     fn wrap_entry(&self, entry: StreamId) -> Result<Delivery> {
         let entry_id = entry.id.clone();
@@ -704,7 +703,7 @@ impl<M> QueueConsumer for RedisConsumer<M>
 where
     M: ManageConnection,
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
+    M::Error: std::error::Error + Send + Sync + 'static,
 {
     type Payload = Vec<u8>;
 

@@ -36,24 +36,18 @@ pub trait ScheduledQueueProducer: QueueProducer {
         &self,
         payload: &P,
         delay: Duration,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = serde_json::to_vec(payload)?;
             self.send_bytes_scheduled(&payload, delay).await
         }
     }
 
-    fn send_custom_scheduled<P: 'static + Send + Sync>(
+    fn send_custom_scheduled<P: Send + Sync + 'static>(
         &self,
         payload: &P,
         delay: Duration,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let encoder = self
                 .get_custom_encoders()
@@ -70,7 +64,7 @@ pub trait ScheduledQueueProducer: QueueProducer {
         custom_encoders: EncoderRegistry<Vec<u8>>,
     ) -> DynScheduledQueueProducer
     where
-        Self: Sized + 'static,
+        Self: 'static,
     {
         DynScheduledQueueProducer::new(self, custom_encoders)
     }

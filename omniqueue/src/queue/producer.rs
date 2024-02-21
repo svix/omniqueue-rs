@@ -12,7 +12,7 @@ use crate::{
     QueueError, QueuePayload, Result,
 };
 
-pub trait QueueProducer: Send + Sync {
+pub trait QueueProducer: Send + Sync + Sized {
     type Payload: QueuePayload;
 
     fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>>;
@@ -29,10 +29,7 @@ pub trait QueueProducer: Send + Sync {
     fn send_serde_json<P: Serialize + Sync>(
         &self,
         payload: &P,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = serde_json::to_vec(payload)?;
             self.send_bytes(&payload).await
@@ -42,10 +39,7 @@ pub trait QueueProducer: Send + Sync {
     fn send_custom<P: Send + Sync + 'static>(
         &self,
         payload: &P,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let encoder = self
                 .get_custom_encoders()
@@ -58,7 +52,7 @@ pub trait QueueProducer: Send + Sync {
 
     fn into_dyn(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer
     where
-        Self: Sized + 'static,
+        Self: 'static,
     {
         DynProducer::new(self, custom_encoders)
     }
