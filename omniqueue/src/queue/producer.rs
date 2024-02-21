@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::{QueuePayload, Result};
 
-pub trait QueueProducer: Send + Sync {
+pub trait QueueProducer: Send + Sync + Sized {
     type Payload: QueuePayload;
 
     fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send;
@@ -19,10 +19,7 @@ pub trait QueueProducer: Send + Sync {
     fn send_serde_json<P: Serialize + Sync>(
         &self,
         payload: &P,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = serde_json::to_vec(payload)?;
             self.send_bytes(&payload).await
@@ -31,7 +28,7 @@ pub trait QueueProducer: Send + Sync {
 
     fn into_dyn(self) -> DynProducer
     where
-        Self: Sized + 'static,
+        Self: 'static,
     {
         DynProducer::new(self)
     }

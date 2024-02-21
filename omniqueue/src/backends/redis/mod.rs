@@ -49,16 +49,22 @@ mod cluster;
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
 
-pub trait RedisConnection
-where
-    Self: ManageConnection + Sized,
-    Self::Connection: redis::aio::ConnectionLike,
-    Self::Error: 'static + std::error::Error + Send + Sync,
+pub trait RedisConnection:
+    ManageConnection<
+    Connection = <Self as RedisConnection>::Connection,
+    Error = <Self as RedisConnection>::Error,
+>
 {
+    type Connection: redis::aio::ConnectionLike + Send + Sync;
+    type Error: std::error::Error + Send + Sync + 'static;
+
     fn from_dsn(dsn: &str) -> Result<Self>;
 }
 
 impl RedisConnection for RedisMultiplexedConnectionManager {
+    type Connection = <Self as ManageConnection>::Connection;
+    type Error = <Self as ManageConnection>::Error;
+
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
@@ -66,6 +72,9 @@ impl RedisConnection for RedisMultiplexedConnectionManager {
 
 #[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
+    type Connection = <Self as ManageConnection>::Connection;
+    type Error = <Self as ManageConnection>::Error;
+
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
@@ -89,24 +98,14 @@ pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
 
 type RawPayload = Vec<u8>;
 
-impl<R> RedisBackend<R>
-where
-    R: RedisConnection,
-    R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> RedisBackend<R> {
     /// Creates a new redis queue builder with the given configuration.
     pub fn builder(config: RedisConfig) -> QueueBuilder<Self, Static> {
         QueueBuilder::new(config)
     }
 }
 
-impl<R> QueueBackend for RedisBackend<R>
-where
-    R: RedisConnection,
-    R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = RawPayload;
     type PayloadOut = RawPayload;
@@ -222,7 +221,7 @@ where
 //   We need access to the pool, and various bits of config to spawn a task, but none of that is
 //   available where it matters right now.
 //   Doing my own thing for now - standalone function that takes what it needs.
-async fn start_background_tasks<R>(
+async fn start_background_tasks<R: RedisConnection>(
     redis: bb8::Pool<R>,
     queue_key: &str,
     delayed_queue_key: &str,
@@ -230,12 +229,7 @@ async fn start_background_tasks<R>(
     consumer_group: &str,
     consumer_name: &str,
     task_timeout_ms: i64,
-) -> JoinSet<Result<()>>
-where
-    R: RedisConnection,
-    R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
-{
+) -> JoinSet<Result<()>> {
     let mut join_set = JoinSet::new();
 
     // FIXME(onelson): does it even make sense to treat delay support as optional here?
@@ -310,18 +304,13 @@ const GENERATE_STREAM_ID: &str = "*";
 const LISTEN_STREAM_ID: &str = ">";
 
 /// Moves "due" messages from a sorted set, where delayed messages are shelved, back onto the main queue.
-async fn background_task_delayed<R>(
+async fn background_task_delayed<R: RedisConnection>(
     pool: bb8::Pool<R>,
     main_queue_name: String,
     delayed_queue_name: String,
     delayed_lock: &str,
     payload_key: &str,
-) -> Result<()>
-where
-    R: RedisConnection,
-    R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
-{
+) -> Result<()> {
     let batch_size: isize = 50;
 
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
@@ -438,18 +427,13 @@ impl FromRedisValue for StreamAutoclaimReply {
 const PENDING_BATCH_SIZE: i16 = 1000;
 
 /// Scoops up messages that have been claimed but not handled by a deadline, then re-queues them.
-async fn background_task_pending<R>(
+async fn background_task_pending<R: RedisConnection>(
     pool: bb8::Pool<R>,
     main_queue_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     pending_duration: i64,
-) -> Result<()>
-where
-    R: RedisConnection,
-    R::Connection: redis::aio::ConnectionLike + Send + Sync,
-    R::Error: 'static + std::error::Error + Send + Sync,
-{
+) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
     // Every iteration checks whether the processing queue has items that should be picked back up,
@@ -522,12 +506,7 @@ struct RedisAcker<M: ManageConnection> {
 }
 
 #[async_trait]
-impl<M> Acker for RedisAcker<M>
-where
-    M: ManageConnection,
-    M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> Acker for RedisAcker<R> {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
@@ -563,12 +542,7 @@ pub struct RedisProducer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
-impl<M> QueueProducer for RedisProducer<M>
-where
-    M: ManageConnection,
-    M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> QueueProducer for RedisProducer<R> {
     type Payload = Vec<u8>;
 
     async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
@@ -616,12 +590,7 @@ fn from_delayed_queue_key(key: &str) -> Result<RawPayload> {
     .map_err(QueueError::generic)
 }
 
-impl<M> ScheduledQueueProducer for RedisProducer<M>
-where
-    M: ManageConnection,
-    M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> ScheduledQueueProducer for RedisProducer<R> {
     async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
         let timestamp: i64 = (std::time::SystemTime::now() + delay)
             .duration_since(std::time::UNIX_EPOCH)
@@ -653,12 +622,7 @@ pub struct RedisConsumer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
-impl<M> RedisConsumer<M>
-where
-    M: ManageConnection,
-    M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> RedisConsumer<R> {
     fn wrap_entry(&self, entry: StreamId) -> Result<Delivery> {
         let entry_id = entry.id.clone();
         let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
@@ -677,12 +641,7 @@ where
     }
 }
 
-impl<M> QueueConsumer for RedisConsumer<M>
-where
-    M: ManageConnection,
-    M::Connection: redis::aio::ConnectionLike + Send + Sync,
-    M::Error: 'static + std::error::Error + Send + Sync,
-{
+impl<R: RedisConnection> QueueConsumer for RedisConsumer<R> {
     type Payload = Vec<u8>;
 
     async fn receive(&mut self) -> Result<Delivery> {
