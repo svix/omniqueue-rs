@@ -3,9 +3,7 @@ use std::{any::TypeId, fmt, future::Future};
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
-use crate::{
-    decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, QueuePayload, Result,
-};
+use crate::{decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, Result};
 
 mod consumer;
 mod producer;
@@ -20,36 +18,33 @@ pub use self::{
 ///
 /// This trait is meant to be implemented on an empty struct representing the backend as a whole.
 pub trait QueueBackend {
-    type PayloadIn: QueuePayload;
-    type PayloadOut: QueuePayload;
-
-    type Producer: QueueProducer<Payload = Self::PayloadIn>;
-    type Consumer: QueueConsumer<Payload = Self::PayloadOut>;
+    type Producer: QueueProducer;
+    type Consumer: QueueConsumer;
 
     type Config;
 
     fn new_pair(
         config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
+        custom_encoders: EncoderRegistry,
+        custom_decoders: DecoderRegistry,
     ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer)>> + Send;
 
     fn producing_half(
         config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
+        custom_encoders: EncoderRegistry,
     ) -> impl Future<Output = Result<Self::Producer>> + Send;
 
     fn consuming_half(
         config: Self::Config,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
+        custom_decoders: DecoderRegistry,
     ) -> impl Future<Output = Result<Self::Consumer>> + Send;
 }
 
 /// The output of queue backends
 pub struct Delivery {
-    pub(crate) payload: Option<Vec<u8>>,
+    pub(crate) payload: Option<String>,
 
-    pub(crate) decoders: DecoderRegistry<Vec<u8>>,
+    pub(crate) decoders: DecoderRegistry,
     pub(crate) acker: Box<dyn Acker>,
 }
 
@@ -98,20 +93,20 @@ impl Delivery {
     /// This method will take the contained bytes out of the delivery, doing no further processing.
     ///
     /// Once called, subsequent calls to any payload methods will fail.
-    pub fn take_payload(&mut self) -> Option<Vec<u8>> {
+    pub fn take_payload(&mut self) -> Option<String> {
         self.payload.take()
     }
 
     /// This method
-    pub fn borrow_payload(&self) -> Option<&[u8]> {
+    pub fn borrow_payload(&self) -> Option<&str> {
         self.payload.as_deref()
     }
 
     pub fn payload_serde_json<T: DeserializeOwned>(&self) -> Result<Option<T>> {
-        let Some(bytes) = self.payload.as_ref() else {
+        let Some(payload) = self.payload.as_ref() else {
             return Ok(None);
         };
-        serde_json::from_slice(bytes).map_err(Into::into)
+        serde_json::from_str(payload).map_err(Into::into)
     }
 }
 

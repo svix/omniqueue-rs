@@ -51,32 +51,20 @@ async fn test_raw_send_recv() {
     let payload = "{\"test\": \"data\"}";
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
-    p.send_raw(&payload.to_owned()).await.unwrap();
-
-    let d = c.receive().await.unwrap();
-    assert_eq!(d.borrow_payload().unwrap(), payload.as_bytes());
-}
-
-#[tokio::test]
-async fn test_bytes_send_recv() {
-    let payload = b"hello";
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
-
-    p.send_bytes(payload).await.unwrap();
+    p.send_raw(payload).await.unwrap();
 
     let d = c.receive().await.unwrap();
     assert_eq!(d.borrow_payload().unwrap(), payload);
-    d.ack().await.unwrap();
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub struct ExType {
-    a: u8,
+    a: char,
 }
 
 #[tokio::test]
 async fn test_serde_send_recv() {
-    let payload = ExType { a: 2 };
+    let payload = ExType { a: '2' };
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
@@ -88,12 +76,12 @@ async fn test_serde_send_recv() {
 
 #[tokio::test]
 async fn test_custom_send_recv() {
-    let payload = ExType { a: 3 };
+    let payload = ExType { a: '3' };
 
-    let encoder = |p: &ExType| Ok(format!("{}", p.a));
-    let decoder = |p: &String| {
+    let encoder = |p: &ExType| Ok([p.a].into_iter().collect());
+    let decoder = |p: &str| {
         Ok(ExType {
-            a: p.parse().unwrap_or(0),
+            a: p.chars().next().unwrap_or('\0'),
         })
     };
 
@@ -118,7 +106,7 @@ async fn test_custom_send_recv() {
 /// Consumer will return immediately if there are fewer than max messages to start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
-    let payload = ExType { a: 2 };
+    let payload = ExType { a: '2' };
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
@@ -136,8 +124,8 @@ async fn test_send_recv_all_partial() {
 /// Consumer should yield items immediately if there's a full batch ready on the first poll.
 #[tokio::test]
 async fn test_send_recv_all_full() {
-    let payload1 = ExType { a: 1 };
-    let payload2 = ExType { a: 2 };
+    let payload1 = ExType { a: '1' };
+    let payload2 = ExType { a: '2' };
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
@@ -167,9 +155,9 @@ async fn test_send_recv_all_full() {
 /// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
 #[tokio::test]
 async fn test_send_recv_all_full_then_partial() {
-    let payload1 = ExType { a: 1 };
-    let payload2 = ExType { a: 2 };
-    let payload3 = ExType { a: 3 };
+    let payload1 = ExType { a: '1' };
+    let payload2 = ExType { a: '2' };
+    let payload3 = ExType { a: '3' };
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
@@ -226,7 +214,7 @@ async fn test_send_recv_all_late_arriving_items() {
 
 #[tokio::test]
 async fn test_scheduled() {
-    let payload1 = ExType { a: 1 };
+    let payload1 = ExType { a: '1' };
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     let delay = Duration::from_secs(3);

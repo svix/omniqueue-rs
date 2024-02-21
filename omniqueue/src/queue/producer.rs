@@ -1,38 +1,24 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-};
+use std::{any::TypeId, collections::HashMap, future::Future, pin::Pin};
 
 use serde::Serialize;
 
 use crate::{
     encoding::{CustomEncoder, EncoderRegistry},
-    QueueError, QueuePayload, Result,
+    QueueError, Result,
 };
 
 pub trait QueueProducer: Send + Sync + Sized {
-    type Payload: QueuePayload;
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>>;
 
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>>;
-
-    fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send;
-
-    fn send_bytes(&self, payload: &[u8]) -> impl Future<Output = Result<()>> + Send {
-        async move {
-            let payload = Self::Payload::from_bytes_naive(payload)?;
-            self.send_raw(&payload).await
-        }
-    }
+    fn send_raw(&self, payload: &str) -> impl Future<Output = Result<()>> + Send;
 
     fn send_serde_json<P: Serialize + Sync>(
         &self,
         payload: &P,
     ) -> impl Future<Output = Result<()>> + Send {
         async move {
-            let payload = serde_json::to_vec(payload)?;
-            self.send_bytes(&payload).await
+            let payload = serde_json::to_string(payload)?;
+            self.send_raw(&payload).await
         }
     }
 
@@ -50,7 +36,7 @@ pub trait QueueProducer: Send + Sync + Sized {
         }
     }
 
-    fn into_dyn(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer
+    fn into_dyn(self, custom_encoders: EncoderRegistry) -> DynProducer
     where
         Self: 'static,
     {
@@ -61,7 +47,7 @@ pub trait QueueProducer: Send + Sync + Sized {
 pub struct DynProducer(Box<dyn ErasedQueueProducer>);
 
 impl DynProducer {
-    fn new(inner: impl QueueProducer + 'static, custom_encoders: EncoderRegistry<Vec<u8>>) -> Self {
+    fn new(inner: impl QueueProducer + 'static, custom_encoders: EncoderRegistry) -> Self {
         let dyn_inner = DynProducerInner {
             inner,
             custom_encoders,
@@ -71,56 +57,41 @@ impl DynProducer {
 }
 
 pub(crate) trait ErasedQueueProducer: Send + Sync {
-    #[allow(clippy::ptr_arg)] // for now
     fn send_raw<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>>;
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>>;
 }
 
 struct DynProducerInner<P> {
     inner: P,
-    custom_encoders: EncoderRegistry<Vec<u8>>,
+    custom_encoders: EncoderRegistry,
 }
 
 impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
     fn send_raw<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            // Prioritize a custom encoder that takes a &[u8].
-            if let Some(encoder) = self
-                .inner
-                .get_custom_encoders()
-                .get(&TypeId::of::<Vec<u8>>())
-            {
-                let payload = encoder.encode(payload as &(dyn Any + Send + Sync))?;
-                self.inner.send_raw(&payload).await
-            } else {
-                self.inner.send_bytes(payload).await
-            }
-        })
+        Box::pin(async move { self.inner.send_raw(payload).await })
     }
 
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>> {
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>> {
         self.custom_encoders.as_ref()
     }
 }
 
 impl QueueProducer for DynProducer {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+    async fn send_raw(&self, payload: &str) -> Result<()> {
         self.0.send_raw(payload).await
     }
 
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>> {
         self.0.get_custom_encoders()
     }
 
-    fn into_dyn(self, _custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer {
+    fn into_dyn(self, _custom_encoders: EncoderRegistry) -> DynProducer {
         self
     }
 }

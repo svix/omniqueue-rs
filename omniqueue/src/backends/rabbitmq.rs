@@ -53,7 +53,7 @@ impl RabbitMqBackend {
 async fn consumer(
     conn: &Connection,
     cfg: RabbitMqConfig,
-    custom_decoders: DecoderRegistry<Vec<u8>>,
+    custom_decoders: DecoderRegistry,
 ) -> Result<RabbitMqConsumer> {
     let channel_rx = conn.create_channel().await.map_err(QueueError::generic)?;
 
@@ -82,7 +82,7 @@ async fn consumer(
 async fn producer(
     conn: &Connection,
     cfg: RabbitMqConfig,
-    custom_encoders: EncoderRegistry<Vec<u8>>,
+    custom_encoders: EncoderRegistry,
 ) -> Result<RabbitMqProducer> {
     let channel_tx = conn.create_channel().await.map_err(QueueError::generic)?;
     Ok(RabbitMqProducer {
@@ -96,9 +96,6 @@ async fn producer(
 }
 
 impl QueueBackend for RabbitMqBackend {
-    type PayloadIn = Vec<u8>;
-    type PayloadOut = Vec<u8>;
-
     type Producer = RabbitMqProducer;
     type Consumer = RabbitMqConsumer;
 
@@ -106,8 +103,8 @@ impl QueueBackend for RabbitMqBackend {
 
     async fn new_pair(
         cfg: RabbitMqConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
+        custom_encoders: EncoderRegistry,
+        custom_decoders: DecoderRegistry,
     ) -> Result<(RabbitMqProducer, RabbitMqConsumer)> {
         let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
@@ -121,7 +118,7 @@ impl QueueBackend for RabbitMqBackend {
 
     async fn producing_half(
         cfg: RabbitMqConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
+        custom_encoders: EncoderRegistry,
     ) -> Result<RabbitMqProducer> {
         let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
@@ -132,7 +129,7 @@ impl QueueBackend for RabbitMqBackend {
 
     async fn consuming_half(
         cfg: RabbitMqConfig,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
+        custom_decoders: DecoderRegistry,
     ) -> Result<RabbitMqConsumer> {
         let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
             .await
@@ -143,7 +140,7 @@ impl QueueBackend for RabbitMqBackend {
 }
 
 pub struct RabbitMqProducer {
-    registry: EncoderRegistry<Vec<u8>>,
+    registry: EncoderRegistry,
     channel: Channel,
     exchange: String,
     routing_key: String,
@@ -152,19 +149,17 @@ pub struct RabbitMqProducer {
 }
 
 impl QueueProducer for RabbitMqProducer {
-    type Payload = Vec<u8>;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>> {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+    async fn send_raw(&self, payload: &str) -> Result<()> {
         self.channel
             .basic_publish(
                 &self.exchange,
                 &self.routing_key,
                 self.options,
-                payload,
+                payload.as_bytes(),
                 self.properties.clone(),
             )
             .await
@@ -175,7 +170,7 @@ impl QueueProducer for RabbitMqProducer {
 }
 
 impl ScheduledQueueProducer for RabbitMqProducer {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         let mut headers = FieldTable::default();
 
         let delay_ms: u32 = delay
@@ -189,7 +184,7 @@ impl ScheduledQueueProducer for RabbitMqProducer {
                 &self.exchange,
                 &self.routing_key,
                 self.options,
-                payload,
+                payload.as_bytes(),
                 self.properties.clone().with_headers(headers),
             )
             .await
@@ -200,34 +195,32 @@ impl ScheduledQueueProducer for RabbitMqProducer {
 }
 
 pub struct RabbitMqConsumer {
-    registry: DecoderRegistry<Vec<u8>>,
+    registry: DecoderRegistry,
     consumer: Consumer,
     requeue_on_nack: bool,
 }
 
 impl RabbitMqConsumer {
-    fn wrap_delivery(&self, delivery: lapin::message::Delivery) -> Delivery {
-        Delivery {
+    fn wrap_delivery(&self, delivery: lapin::message::Delivery) -> Result<Delivery> {
+        Ok(Delivery {
             decoders: self.registry.clone(),
-            payload: Some(delivery.data),
+            payload: Some(String::from_utf8(delivery.data).map_err(QueueError::generic)?),
             acker: Box::new(RabbitMqAcker {
                 acker: Some(delivery.acker),
                 requeue_on_nack: self.requeue_on_nack,
             }),
-        }
+        })
     }
 }
 
 impl QueueConsumer for RabbitMqConsumer {
-    type Payload = Vec<u8>;
-
     async fn receive(&mut self) -> Result<Delivery> {
         let mut stream =
             self.consumer
                 .clone()
                 .map(|l: Result<lapin::message::Delivery, lapin::Error>| {
                     let l = l.map_err(QueueError::generic)?;
-                    Ok(self.wrap_delivery(l))
+                    self.wrap_delivery(l)
                 });
 
         stream.next().await.ok_or(QueueError::NoData)?
@@ -241,7 +234,7 @@ impl QueueConsumer for RabbitMqConsumer {
         let mut stream = self.consumer.clone().map(
             |l: Result<lapin::message::Delivery, lapin::Error>| -> Result<Delivery> {
                 let l = l.map_err(QueueError::generic)?;
-                Ok(self.wrap_delivery(l))
+                self.wrap_delivery(l)
             },
         );
         let start = Instant::now();

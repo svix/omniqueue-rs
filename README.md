@@ -88,11 +88,10 @@ struct ExampleType {
 
 
 let (p, mut c) = RabbitMqBackend::builder(cfg)
-	// RabbitMQ's internal representation is an arbitrary byte array.
-	.with_encoder(|et: &ExampleType| -> omniqueue::Result<Vec<u8>> {
+	.with_encoder(|et: &ExampleType| -> omniqueue::Result<String> {
 		Ok(vec![et.field])
 	})
-	.with_decoder(|v: &Vec<u8>| -> omniqueue::Result<ExampleType> {
+	.with_decoder(|v: &str| -> omniqueue::Result<ExampleType> {
 		Ok(ExampleType {
 			field: *v.first().unwrap_or(&0),
 		})

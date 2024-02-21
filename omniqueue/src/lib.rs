@@ -103,16 +103,16 @@
 //!
 //! #[derive(Debug, PartialEq)]
 //! struct ExampleType {
-//!     field: u8,
+//!     field: char,
 //! }
 //!
 //! let (p, mut c) = RabbitMqBackend::builder(cfg)
-//!     .with_encoder(|et: &ExampleType| -> omniqueue::Result<Vec<u8>> {
-//!         Ok(vec![et.field])
+//!     .with_encoder(|et: &ExampleType| -> omniqueue::Result<String> {
+//!         Ok([et.field].into_iter().collect())
 //!     })
-//!     .with_decoder(|v: &Vec<u8>| -> omniqueue::Result<ExampleType> {
+//!     .with_decoder(|p: &str| -> omniqueue::Result<ExampleType> {
 //!         Ok(ExampleType {
-//!             field: *v.first().unwrap_or(&0),
+//!             field: p.chars().next().unwrap_or('\0'),
 //!         })
 //!     })
 //!     .build_pair()
@@ -172,42 +172,5 @@ pub enum QueueError {
 impl QueueError {
     pub fn generic<E: std::error::Error + Send + Sync + 'static>(e: E) -> Self {
         Self::Generic(Box::new(e))
-    }
-}
-
-pub trait QueuePayload: Send + Sync + 'static {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>>;
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>>;
-}
-
-impl QueuePayload for Vec<u8> {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
-        Ok(self.clone())
-    }
-
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
-        Ok(Box::new(bytes.to_owned()))
-    }
-}
-
-impl QueuePayload for String {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
-        Ok(self.as_bytes().to_owned())
-    }
-
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
-        Ok(Box::new(
-            String::from_utf8(bytes.to_owned()).map_err(QueueError::generic)?,
-        ))
-    }
-}
-
-impl QueuePayload for serde_json::Value {
-    fn to_bytes_naive(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(Into::into)
-    }
-
-    fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>> {
-        serde_json::from_slice(bytes).map_err(Into::into)
     }
 }

@@ -21,11 +21,11 @@ pub struct Dynamic;
 pub struct QueueBuilder<Q: QueueBackend, S = Static> {
     config: Q::Config,
 
-    encoders: HashMap<TypeId, Box<dyn CustomEncoder<Q::PayloadIn>>>,
-    decoders: HashMap<TypeId, Arc<dyn CustomDecoder<Q::PayloadOut>>>,
+    encoders: HashMap<TypeId, Box<dyn CustomEncoder>>,
+    decoders: HashMap<TypeId, Arc<dyn CustomDecoder>>,
 
-    encoders_bytes: HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>>,
-    decoders_bytes: HashMap<TypeId, Arc<dyn CustomDecoder<Vec<u8>>>>,
+    encoders_bytes: HashMap<TypeId, Box<dyn CustomEncoder>>,
+    decoders_bytes: HashMap<TypeId, Arc<dyn CustomDecoder>>,
 
     _pd: PhantomData<S>,
 }
@@ -47,14 +47,14 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
         }
     }
 
-    pub fn with_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I, Q::PayloadIn>) -> Self {
+    pub fn with_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I>) -> Self {
         let encoder = e.into();
         self.encoders.insert(TypeId::of::<I>(), encoder);
 
         self
     }
 
-    pub fn with_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<Q::PayloadOut, O>) -> Self {
+    pub fn with_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<O>) -> Self {
         let decoder = d.into();
         self.decoders.insert(TypeId::of::<O>(), decoder);
 
@@ -91,14 +91,14 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
 }
 
 impl<Q: QueueBackend + 'static> QueueBuilder<Q, Dynamic> {
-    pub fn with_bytes_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I, Vec<u8>>) -> Self {
+    pub fn with_raw_encoder<I: 'static>(mut self, e: impl IntoCustomEncoder<I>) -> Self {
         let encoder = e.into();
         self.encoders_bytes.insert(TypeId::of::<I>(), encoder);
 
         self
     }
 
-    pub fn with_bytes_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<Vec<u8>, O>) -> Self {
+    pub fn with_raw_decoder<O: 'static>(mut self, d: impl IntoCustomDecoder<O>) -> Self {
         let decoder = d.into();
         self.decoders_bytes.insert(TypeId::of::<O>(), decoder);
 

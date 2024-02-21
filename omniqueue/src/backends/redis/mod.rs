@@ -88,8 +88,6 @@ pub struct RedisBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
 #[cfg(feature = "redis_cluster")]
 pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
 
-type RawPayload = Vec<u8>;
-
 impl<R> RedisBackend<R>
 where
     R: RedisConnection,
@@ -108,10 +106,6 @@ where
     R::Connection: redis::aio::ConnectionLike + Send + Sync,
     R::Error: std::error::Error + Send + Sync + 'static,
 {
-    // FIXME: Is it possible to use the types Redis actually uses?
-    type PayloadIn = RawPayload;
-    type PayloadOut = RawPayload;
-
     type Producer = RedisProducer<R>;
     type Consumer = RedisConsumer<R>;
 
@@ -119,8 +113,8 @@ where
 
     async fn new_pair(
         cfg: RedisConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
+        custom_encoders: EncoderRegistry,
+        custom_decoders: DecoderRegistry,
     ) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
@@ -165,7 +159,7 @@ where
 
     async fn producing_half(
         cfg: RedisConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
+        custom_encoders: EncoderRegistry,
     ) -> Result<RedisProducer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
@@ -198,7 +192,7 @@ where
 
     async fn consuming_half(
         cfg: RedisConfig,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
+        custom_decoders: DecoderRegistry,
     ) -> Result<RedisConsumer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
@@ -571,7 +565,7 @@ where
 }
 
 pub struct RedisProducer<M: ManageConnection> {
-    registry: EncoderRegistry<Vec<u8>>,
+    registry: EncoderRegistry,
     redis: bb8::Pool<M>,
     queue_key: String,
     delayed_queue_key: String,
@@ -585,13 +579,11 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: std::error::Error + Send + Sync + 'static,
 {
-    type Payload = Vec<u8>;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>> {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+    async fn send_raw(&self, payload: &str) -> Result<()> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
         redis::Cmd::xadd(
             &self.queue_key,
@@ -616,24 +608,17 @@ fn delayed_key_id() -> String {
 }
 
 /// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_delayed_queue_key(payload: &RawPayload) -> Result<String> {
-    Ok(format!(
-        "{}|{}",
-        delayed_key_id(),
-        serde_json::to_string(payload).map_err(QueueError::generic)?
-    ))
+fn to_delayed_queue_key(payload: &str) -> String {
+    format!("{}|{payload}", delayed_key_id())
 }
 
 /// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &str) -> Result<RawPayload> {
-    // All information is stored in the key in which the ID and JSON formatted task
-    // are separated by a `|`. So, take the key, then take the part after the `|`.
-    serde_json::from_str(
-        key.split('|')
-            .nth(1)
-            .ok_or_else(|| QueueError::Generic("Improper key format".into()))?,
-    )
-    .map_err(QueueError::generic)
+fn from_delayed_queue_key(key: &str) -> Result<&str> {
+    // All information is stored in the key in which the ID and task are
+    // separated by a `|`. So, take the key, then take the part after the `|`.
+    key.split('|')
+        .nth(1)
+        .ok_or_else(|| QueueError::Generic("Improper key format".into()))
 }
 
 impl<M> ScheduledQueueProducer for RedisProducer<M>
@@ -642,7 +627,7 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: std::error::Error + Send + Sync + 'static,
 {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         let timestamp: i64 = (std::time::SystemTime::now() + delay)
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(QueueError::generic)?
@@ -653,7 +638,7 @@ where
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
         redis::Cmd::zadd(
             &self.delayed_queue_key,
-            to_delayed_queue_key(payload)?,
+            to_delayed_queue_key(payload),
             timestamp,
         )
         .query_async(&mut *conn)
@@ -665,7 +650,7 @@ where
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
-    registry: DecoderRegistry<Vec<u8>>,
+    registry: DecoderRegistry,
     redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
@@ -683,7 +668,7 @@ where
     fn wrap_entry(&self, entry: StreamId) -> Result<Delivery> {
         let entry_id = entry.id.clone();
         let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
-        let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
+        let payload: String = redis::from_redis_value(payload).map_err(QueueError::generic)?;
 
         Ok(Delivery {
             payload: Some(payload),
@@ -705,8 +690,6 @@ where
     M::Connection: redis::aio::ConnectionLike + Send + Sync,
     M::Error: std::error::Error + Send + Sync + 'static,
 {
-    type Payload = Vec<u8>;
-
     async fn receive(&mut self) -> Result<Delivery> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
 

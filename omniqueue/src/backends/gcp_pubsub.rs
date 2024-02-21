@@ -13,11 +13,13 @@ use google_cloud_pubsub::client::{
 };
 use google_cloud_pubsub::subscriber::ReceivedMessage;
 use google_cloud_pubsub::subscription::Subscription;
-use serde::Serialize;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{any::TypeId, collections::HashMap};
+use std::{
+    mem,
+    path::{Path, PathBuf},
+};
 
 pub struct GcpPubSubBackend;
 
@@ -27,10 +29,6 @@ impl GcpPubSubBackend {
         QueueBuilder::new(config)
     }
 }
-
-type Payload = Vec<u8>;
-type Encoders = EncoderRegistry<Payload>;
-type Decoders = DecoderRegistry<Payload>;
 
 // FIXME: topic/subscription are each for read/write. Split config up?
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,7 +73,11 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
 }
 
 impl GcpPubSubConsumer {
-    async fn new(client: Client, subscription_id: String, registry: Decoders) -> Result<Self> {
+    async fn new(
+        client: Client,
+        subscription_id: String,
+        registry: DecoderRegistry,
+    ) -> Result<Self> {
         Ok(Self {
             client,
             registry,
@@ -85,7 +87,7 @@ impl GcpPubSubConsumer {
 }
 
 impl GcpPubSubProducer {
-    async fn new(client: Client, topic_id: String, registry: Encoders) -> Result<Self> {
+    async fn new(client: Client, topic_id: String, registry: EncoderRegistry) -> Result<Self> {
         let topic = client.topic(&topic_id);
         // Only warn if the topic doesn't exist at this point.
         // If it gets created after the fact, we should be able to still use it when available,
@@ -104,16 +106,13 @@ impl GcpPubSubProducer {
 impl QueueBackend for GcpPubSubBackend {
     type Config = GcpPubSubConfig;
 
-    type PayloadIn = Payload;
-    type PayloadOut = Payload;
-
     type Producer = GcpPubSubProducer;
     type Consumer = GcpPubSubConsumer;
 
     async fn new_pair(
         config: Self::Config,
-        custom_encoders: Encoders,
-        custom_decoders: Decoders,
+        custom_encoders: EncoderRegistry,
+        custom_decoders: DecoderRegistry,
     ) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
         let client = get_client(&config).await?;
         Ok((
@@ -124,7 +123,7 @@ impl QueueBackend for GcpPubSubBackend {
 
     async fn producing_half(
         config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
+        custom_encoders: EncoderRegistry,
     ) -> Result<GcpPubSubProducer> {
         let client = get_client(&config).await?;
         GcpPubSubProducer::new(client, config.topic_id, custom_encoders).await
@@ -132,7 +131,7 @@ impl QueueBackend for GcpPubSubBackend {
 
     async fn consuming_half(
         config: Self::Config,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
+        custom_decoders: DecoderRegistry,
     ) -> Result<GcpPubSubConsumer> {
         let client = get_client(&config).await?;
         GcpPubSubConsumer::new(client, config.subscription_id, custom_decoders).await
@@ -141,7 +140,7 @@ impl QueueBackend for GcpPubSubBackend {
 
 pub struct GcpPubSubProducer {
     client: Client,
-    registry: Encoders,
+    registry: EncoderRegistry,
     topic_id: Arc<String>,
 }
 
@@ -154,15 +153,13 @@ impl std::fmt::Debug for GcpPubSubProducer {
 }
 
 impl QueueProducer for GcpPubSubProducer {
-    type Payload = Payload;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
+    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder>> {
         self.registry.as_ref()
     }
 
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
+    async fn send_raw(&self, payload: &str) -> Result<()> {
         let msg = PubsubMessage {
-            data: payload.to_vec(),
+            data: payload.as_bytes().to_owned(),
             ..Default::default()
         };
 
@@ -185,15 +182,11 @@ impl QueueProducer for GcpPubSubProducer {
         awaiter.get().await.map_err(QueueError::generic)?;
         Ok(())
     }
-
-    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
-        self.send_raw(&serde_json::to_vec(&payload)?).await
-    }
 }
 
 pub struct GcpPubSubConsumer {
     client: Client,
-    registry: Decoders,
+    registry: DecoderRegistry,
     subscription_id: Arc<String>,
 }
 impl std::fmt::Debug for GcpPubSubConsumer {
@@ -219,27 +212,26 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
 }
 
 impl GcpPubSubConsumer {
-    fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
+    fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Result<Delivery> {
         // FIXME: would be nice to avoid having to move the data out here.
         //   While it's possible to ack via a subscription and an ack_id, nack is only
         //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
         //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
-        let payload = recv_msg.message.data.drain(..).collect();
+        let payload = String::from_utf8(mem::take(&mut recv_msg.message.data))
+            .map_err(QueueError::generic)?;
 
-        Delivery {
+        Ok(Delivery {
             decoders: self.registry.clone(),
             acker: Box::new(GcpPubSubAcker {
                 recv_msg,
                 subscription_id: self.subscription_id.clone(),
             }),
             payload: Some(payload),
-        }
+        })
     }
 }
 
 impl QueueConsumer for GcpPubSubConsumer {
-    type Payload = Payload;
-
     async fn receive(&mut self) -> Result<Delivery> {
         let subscription = subscription(&self.client, &self.subscription_id).await?;
         let mut stream = subscription
@@ -249,7 +241,7 @@ impl QueueConsumer for GcpPubSubConsumer {
 
         let recv_msg = stream.next().await.ok_or_else(|| QueueError::NoData)?;
 
-        Ok(self.wrap_recv_msg(recv_msg))
+        self.wrap_recv_msg(recv_msg)
     }
 
     async fn receive_all(
@@ -259,11 +251,11 @@ impl QueueConsumer for GcpPubSubConsumer {
     ) -> Result<Vec<Delivery>> {
         let subscription = subscription(&self.client, &self.subscription_id).await?;
         match tokio::time::timeout(deadline, subscription.pull(max_messages as _, None)).await {
-            Ok(messages) => Ok(messages
+            Ok(messages) => messages
                 .map_err(QueueError::generic)?
                 .into_iter()
                 .map(|m| self.wrap_recv_msg(m))
-                .collect()),
+                .collect(),
             // Timeout
             Err(_) => Ok(vec![]),
         }
