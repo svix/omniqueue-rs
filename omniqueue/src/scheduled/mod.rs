@@ -1,18 +1,8 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    time::Duration,
-};
+use std::{future::Future, pin::Pin, time::Duration};
 
 use serde::Serialize;
 
-use crate::{
-    encoding::{CustomEncoder, EncoderRegistry},
-    queue::ErasedQueueProducer,
-    QueueError, QueuePayload, QueueProducer, Result,
-};
+use crate::{queue::ErasedQueueProducer, QueuePayload, QueueProducer, Result};
 
 pub trait ScheduledQueueProducer: QueueProducer {
     fn send_raw_scheduled(
@@ -46,47 +36,19 @@ pub trait ScheduledQueueProducer: QueueProducer {
         }
     }
 
-    fn send_custom_scheduled<P: 'static + Send + Sync>(
-        &self,
-        payload: &P,
-        delay: Duration,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
-        async move {
-            let encoder = self
-                .get_custom_encoders()
-                .get(&TypeId::of::<P>())
-                .ok_or(QueueError::NoEncoderForThisType)?;
-
-            let payload = encoder.encode(payload)?;
-            self.send_raw_scheduled(&payload, delay).await
-        }
-    }
-
-    fn into_dyn_scheduled(
-        self,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> DynScheduledQueueProducer
+    fn into_dyn_scheduled(self) -> DynScheduledQueueProducer
     where
         Self: Sized + 'static,
     {
-        DynScheduledQueueProducer::new(self, custom_encoders)
+        DynScheduledQueueProducer::new(self)
     }
 }
 
 pub struct DynScheduledQueueProducer(Box<dyn ErasedScheduledQueueProducer>);
 
 impl DynScheduledQueueProducer {
-    fn new(
-        inner: impl ScheduledQueueProducer + 'static,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Self {
-        let dyn_inner = DynScheduledProducerInner {
-            inner,
-            custom_encoders,
-        };
+    fn new(inner: impl ScheduledQueueProducer + 'static) -> Self {
+        let dyn_inner = DynScheduledProducerInner { inner };
         Self(Box::new(dyn_inner))
     }
 }
@@ -102,7 +64,6 @@ trait ErasedScheduledQueueProducer: ErasedQueueProducer {
 
 struct DynScheduledProducerInner<P> {
     inner: P,
-    custom_encoders: EncoderRegistry<Vec<u8>>,
 }
 
 impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInner<P> {
@@ -110,23 +71,7 @@ impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInne
         &'a self,
         payload: &'a Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            // Prioritize a custom encoder that takes a &[u8].
-            if let Some(encoder) = self
-                .inner
-                .get_custom_encoders()
-                .get(&TypeId::of::<Vec<u8>>())
-            {
-                let payload = encoder.encode(payload as &(dyn Any + Send + Sync))?;
-                self.inner.send_raw(&payload).await
-            } else {
-                self.inner.send_bytes(payload).await
-            }
-        })
-    }
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>> {
-        self.custom_encoders.as_ref()
+        Box::pin(async move { self.inner.send_bytes(payload).await })
     }
 }
 
@@ -136,18 +81,7 @@ impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledPro
         payload: &'a Vec<u8>,
         delay: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            if let Some(encoder) = self
-                .inner
-                .get_custom_encoders()
-                .get(&TypeId::of::<Vec<u8>>())
-            {
-                let payload = encoder.encode(payload as &(dyn Any + Send + Sync))?;
-                self.inner.send_raw(&payload).await
-            } else {
-                self.inner.send_bytes_scheduled(payload, delay).await
-            }
-        })
+        Box::pin(async move { self.inner.send_bytes_scheduled(payload, delay).await })
     }
 }
 
@@ -157,10 +91,6 @@ impl QueueProducer for DynScheduledQueueProducer {
     async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
         self.0.send_raw(payload).await
     }
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.0.get_custom_encoders()
-    }
 }
 
 impl ScheduledQueueProducer for DynScheduledQueueProducer {
@@ -168,10 +98,7 @@ impl ScheduledQueueProducer for DynScheduledQueueProducer {
         self.0.send_raw_scheduled(payload, delay).await
     }
 
-    fn into_dyn_scheduled(
-        self,
-        _custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> DynScheduledQueueProducer {
+    fn into_dyn_scheduled(self) -> DynScheduledQueueProducer {
         self
     }
 }

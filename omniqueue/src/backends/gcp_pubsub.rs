@@ -1,7 +1,5 @@
 use crate::{
     builder::{QueueBuilder, Static},
-    decoding::DecoderRegistry,
-    encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
     QueueError, Result,
 };
@@ -17,7 +15,6 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use std::{any::TypeId, collections::HashMap};
 
 pub struct GcpPubSubBackend;
 
@@ -29,8 +26,6 @@ impl GcpPubSubBackend {
 }
 
 type Payload = Vec<u8>;
-type Encoders = EncoderRegistry<Payload>;
-type Decoders = DecoderRegistry<Payload>;
 
 // FIXME: topic/subscription are each for read/write. Split config up?
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,17 +70,16 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
 }
 
 impl GcpPubSubConsumer {
-    async fn new(client: Client, subscription_id: String, registry: Decoders) -> Result<Self> {
+    async fn new(client: Client, subscription_id: String) -> Result<Self> {
         Ok(Self {
             client,
-            registry,
             subscription_id: Arc::new(subscription_id),
         })
     }
 }
 
 impl GcpPubSubProducer {
-    async fn new(client: Client, topic_id: String, registry: Encoders) -> Result<Self> {
+    async fn new(client: Client, topic_id: String) -> Result<Self> {
         let topic = client.topic(&topic_id);
         // Only warn if the topic doesn't exist at this point.
         // If it gets created after the fact, we should be able to still use it when available,
@@ -95,7 +89,6 @@ impl GcpPubSubProducer {
         }
         Ok(Self {
             client,
-            registry,
             topic_id: Arc::new(topic_id),
         })
     }
@@ -110,38 +103,27 @@ impl QueueBackend for GcpPubSubBackend {
     type Producer = GcpPubSubProducer;
     type Consumer = GcpPubSubConsumer;
 
-    async fn new_pair(
-        config: Self::Config,
-        custom_encoders: Encoders,
-        custom_decoders: Decoders,
-    ) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
+    async fn new_pair(config: Self::Config) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
         let client = get_client(&config).await?;
         Ok((
-            GcpPubSubProducer::new(client.clone(), config.topic_id, custom_encoders).await?,
-            GcpPubSubConsumer::new(client, config.subscription_id, custom_decoders).await?,
+            GcpPubSubProducer::new(client.clone(), config.topic_id).await?,
+            GcpPubSubConsumer::new(client, config.subscription_id).await?,
         ))
     }
 
-    async fn producing_half(
-        config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
-    ) -> Result<GcpPubSubProducer> {
+    async fn producing_half(config: Self::Config) -> Result<GcpPubSubProducer> {
         let client = get_client(&config).await?;
-        GcpPubSubProducer::new(client, config.topic_id, custom_encoders).await
+        GcpPubSubProducer::new(client, config.topic_id).await
     }
 
-    async fn consuming_half(
-        config: Self::Config,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> Result<GcpPubSubConsumer> {
+    async fn consuming_half(config: Self::Config) -> Result<GcpPubSubConsumer> {
         let client = get_client(&config).await?;
-        GcpPubSubConsumer::new(client, config.subscription_id, custom_decoders).await
+        GcpPubSubConsumer::new(client, config.subscription_id).await
     }
 }
 
 pub struct GcpPubSubProducer {
     client: Client,
-    registry: Encoders,
     topic_id: Arc<String>,
 }
 
@@ -155,10 +137,6 @@ impl std::fmt::Debug for GcpPubSubProducer {
 
 impl QueueProducer for GcpPubSubProducer {
     type Payload = Payload;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.registry.as_ref()
-    }
 
     async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
         let msg = PubsubMessage {
@@ -193,7 +171,6 @@ impl QueueProducer for GcpPubSubProducer {
 
 pub struct GcpPubSubConsumer {
     client: Client,
-    registry: Decoders,
     subscription_id: Arc<String>,
 }
 impl std::fmt::Debug for GcpPubSubConsumer {
@@ -227,7 +204,6 @@ impl GcpPubSubConsumer {
         let payload = recv_msg.message.data.drain(..).collect();
 
         Delivery {
-            decoders: self.registry.clone(),
             acker: Box::new(GcpPubSubAcker {
                 recv_msg,
                 subscription_id: self.subscription_id.clone(),

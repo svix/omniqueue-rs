@@ -24,9 +24,9 @@
 // have generic return types. This is cleaner than the turbofish operator in my opinion.
 #![allow(clippy::let_unit_value)]
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
@@ -40,8 +40,6 @@ use tokio::task::JoinSet;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    decoding::DecoderRegistry,
-    encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
     QueueError, Result, ScheduledQueueProducer,
 };
@@ -118,11 +116,7 @@ where
 
     type Config = RedisConfig;
 
-    async fn new_pair(
-        cfg: RedisConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
+    async fn new_pair(cfg: RedisConfig) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -145,7 +139,6 @@ where
 
         Ok((
             RedisProducer {
-                registry: custom_encoders,
                 redis: redis.clone(),
                 queue_key: cfg.queue_key.clone(),
                 delayed_queue_key: cfg.delayed_queue_key,
@@ -153,7 +146,6 @@ where
                 _background_tasks: background_tasks.clone(),
             },
             RedisConsumer {
-                registry: custom_decoders,
                 redis,
                 queue_key: cfg.queue_key,
                 consumer_group: cfg.consumer_group,
@@ -164,10 +156,7 @@ where
         ))
     }
 
-    async fn producing_half(
-        cfg: RedisConfig,
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<RedisProducer<R>> {
+    async fn producing_half(cfg: RedisConfig) -> Result<RedisProducer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -188,7 +177,6 @@ where
             .await,
         );
         Ok(RedisProducer {
-            registry: custom_encoders,
             redis,
             queue_key: cfg.queue_key,
             delayed_queue_key: cfg.delayed_queue_key,
@@ -197,10 +185,7 @@ where
         })
     }
 
-    async fn consuming_half(
-        cfg: RedisConfig,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<RedisConsumer<R>> {
+    async fn consuming_half(cfg: RedisConfig) -> Result<RedisConsumer<R>> {
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -222,7 +207,6 @@ where
         );
 
         Ok(RedisConsumer {
-            registry: custom_decoders,
             redis,
             queue_key: cfg.queue_key,
             consumer_group: cfg.consumer_group,
@@ -572,7 +556,6 @@ where
 }
 
 pub struct RedisProducer<M: ManageConnection> {
-    registry: EncoderRegistry<Vec<u8>>,
     redis: bb8::Pool<M>,
     queue_key: String,
     delayed_queue_key: String,
@@ -587,10 +570,6 @@ where
     M::Error: 'static + std::error::Error + Send + Sync,
 {
     type Payload = Vec<u8>;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.registry.as_ref()
-    }
 
     async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
@@ -666,7 +645,6 @@ where
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
-    registry: DecoderRegistry<Vec<u8>>,
     redis: bb8::Pool<M>,
     queue_key: String,
     consumer_group: String,
@@ -695,7 +673,6 @@ where
                 entry_id,
                 already_acked_or_nacked: false,
             }),
-            decoders: self.registry.clone(),
         })
     }
 }

@@ -1,11 +1,9 @@
-use std::{any::TypeId, fmt, future::Future};
+use std::{fmt, future::Future};
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
-use crate::{
-    decoding::DecoderRegistry, encoding::EncoderRegistry, QueueError, QueuePayload, Result,
-};
+use crate::{QueueError, QueuePayload, Result};
 
 mod consumer;
 mod producer;
@@ -30,26 +28,15 @@ pub trait QueueBackend {
 
     fn new_pair(
         config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
     ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer)>> + Send;
 
-    fn producing_half(
-        config: Self::Config,
-        custom_encoders: EncoderRegistry<Self::PayloadIn>,
-    ) -> impl Future<Output = Result<Self::Producer>> + Send;
-
-    fn consuming_half(
-        config: Self::Config,
-        custom_decoders: DecoderRegistry<Self::PayloadOut>,
-    ) -> impl Future<Output = Result<Self::Consumer>> + Send;
+    fn producing_half(config: Self::Config) -> impl Future<Output = Result<Self::Producer>> + Send;
+    fn consuming_half(config: Self::Config) -> impl Future<Output = Result<Self::Consumer>> + Send;
 }
 
 /// The output of queue backends
 pub struct Delivery {
     pub(crate) payload: Option<Vec<u8>>,
-
-    pub(crate) decoders: DecoderRegistry<Vec<u8>>,
     pub(crate) acker: Box<dyn Acker>,
 }
 
@@ -72,27 +59,6 @@ impl Delivery {
     /// is either reinserted into the same queue or is sent to a separate collection.
     pub async fn nack(mut self) -> Result<(), (QueueError, Self)> {
         self.acker.nack().await.map_err(|e| (e, self))
-    }
-
-    /// This method will deserialize the contained bytes using the configured decoder.
-    ///
-    /// If a decoder does not exist for the type parameter T, this function will return an error.
-    ///
-    /// This method does not consume the payload.
-    pub fn payload_custom<T: 'static>(&self) -> Result<Option<T>> {
-        let Some(payload) = self.payload.as_ref() else {
-            return Ok(None);
-        };
-
-        let decoder = self
-            .decoders
-            .get(&TypeId::of::<T>())
-            .ok_or(QueueError::NoDecoderForThisType)?;
-        decoder
-            .decode(payload)?
-            .downcast()
-            .map(|boxed| Some(*boxed))
-            .map_err(|_| QueueError::AnyError)
     }
 
     /// This method will take the contained bytes out of the delivery, doing no further processing.

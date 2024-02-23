@@ -1,5 +1,4 @@
 use std::time::Duration;
-use std::{any::TypeId, collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use aws_sdk_sqs::types::Message;
@@ -9,8 +8,6 @@ use aws_sdk_sqs::{
 
 use crate::{
     builder::{QueueBuilder, Static},
-    decoding::{CustomDecoder, CustomDecoderStandardized, DecoderRegistry},
-    encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
     QueueError, Result, ScheduledQueueProducer,
 };
@@ -39,11 +36,7 @@ impl QueueBackend for SqsBackend {
 
     type Config = SqsConfig;
 
-    async fn new_pair(
-        cfg: SqsConfig,
-        custom_encoders: EncoderRegistry<String>,
-        custom_decoders: DecoderRegistry<String>,
-    ) -> Result<(SqsProducer, SqsConsumer)> {
+    async fn new_pair(cfg: SqsConfig) -> Result<(SqsProducer, SqsConsumer)> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -56,28 +49,11 @@ impl QueueBackend for SqsBackend {
         let client = Client::new(&aws_cfg);
 
         let producer = SqsProducer {
-            registry: custom_encoders,
             client: client.clone(),
             queue_dsn: cfg.queue_dsn.clone(),
         };
 
-        let byte_decoders = Arc::new(
-            custom_decoders
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        *k,
-                        Arc::new(CustomDecoderStandardized::from_decoder(
-                            v.clone(),
-                            |b: &Vec<u8>| String::from_utf8(b.clone()).map_err(QueueError::generic),
-                        )) as Arc<dyn CustomDecoder<Vec<u8>>>,
-                    )
-                })
-                .collect(),
-        );
-
         let consumer = SqsConsumer {
-            bytes_registry: byte_decoders,
             client,
             queue_dsn: cfg.queue_dsn,
         };
@@ -85,10 +61,7 @@ impl QueueBackend for SqsBackend {
         Ok((producer, consumer))
     }
 
-    async fn producing_half(
-        cfg: SqsConfig,
-        custom_encoders: EncoderRegistry<String>,
-    ) -> Result<SqsProducer> {
+    async fn producing_half(cfg: SqsConfig) -> Result<SqsProducer> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -101,7 +74,6 @@ impl QueueBackend for SqsBackend {
         let client = Client::new(&aws_cfg);
 
         let producer = SqsProducer {
-            registry: custom_encoders,
             client,
             queue_dsn: cfg.queue_dsn,
         };
@@ -109,10 +81,7 @@ impl QueueBackend for SqsBackend {
         Ok(producer)
     }
 
-    async fn consuming_half(
-        cfg: SqsConfig,
-        custom_decoders: DecoderRegistry<String>,
-    ) -> Result<SqsConsumer> {
+    async fn consuming_half(cfg: SqsConfig) -> Result<SqsConsumer> {
         let aws_cfg = if cfg.override_endpoint {
             aws_config::from_env()
                 .endpoint_url(&cfg.queue_dsn)
@@ -124,23 +93,7 @@ impl QueueBackend for SqsBackend {
 
         let client = Client::new(&aws_cfg);
 
-        let byte_decoders = Arc::new(
-            custom_decoders
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        *k,
-                        Arc::new(CustomDecoderStandardized::from_decoder(
-                            v.clone(),
-                            |b: &Vec<u8>| String::from_utf8(b.clone()).map_err(QueueError::generic),
-                        )) as Arc<dyn CustomDecoder<Vec<u8>>>,
-                    )
-                })
-                .collect(),
-        );
-
         let consumer = SqsConsumer {
-            bytes_registry: byte_decoders,
             client,
             queue_dsn: cfg.queue_dsn,
         };
@@ -196,17 +149,12 @@ impl Acker for SqsAcker {
 }
 
 pub struct SqsProducer {
-    registry: Arc<HashMap<TypeId, Box<dyn CustomEncoder<String>>>>,
     client: Client,
     queue_dsn: String,
 }
 
 impl QueueProducer for SqsProducer {
     type Payload = String;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.registry.as_ref()
-    }
 
     async fn send_raw(&self, payload: &String) -> Result<()> {
         self.client
@@ -237,7 +185,6 @@ impl ScheduledQueueProducer for SqsProducer {
 }
 
 pub struct SqsConsumer {
-    bytes_registry: DecoderRegistry<Vec<u8>>,
     client: Client,
     queue_dsn: String,
 }
@@ -245,7 +192,6 @@ pub struct SqsConsumer {
 impl SqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
         Delivery {
-            decoders: self.bytes_registry.clone(),
             acker: Box::new(SqsAcker {
                 ack_client: self.client.clone(),
                 queue_dsn: self.queue_dsn.clone(),
