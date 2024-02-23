@@ -5,11 +5,12 @@ use aws_sdk_sqs::types::Message;
 use aws_sdk_sqs::{
     operation::delete_message::DeleteMessageError, types::error::ReceiptHandleIsInvalid, Client,
 };
+use serde::Serialize;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, Result, ScheduledQueueProducer,
+    queue::{Acker, Delivery, QueueBackend},
+    QueueError, Result,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,10 +154,8 @@ pub struct SqsProducer {
     queue_dsn: String,
 }
 
-impl QueueProducer for SqsProducer {
-    type Payload = String;
-
-    async fn send_raw(&self, payload: &String) -> Result<()> {
+impl SqsProducer {
+    pub async fn send_raw(&self, payload: &str) -> Result<()> {
         self.client
             .send_message()
             .queue_url(&self.queue_dsn)
@@ -167,10 +166,13 @@ impl QueueProducer for SqsProducer {
 
         Ok(())
     }
-}
 
-impl ScheduledQueueProducer for SqsProducer {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+        let payload = serde_json::to_string(payload)?;
+        self.send_raw(&payload).await
+    }
+
+    pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         self.client
             .send_message()
             .queue_url(&self.queue_dsn)
@@ -182,7 +184,19 @@ impl ScheduledQueueProducer for SqsProducer {
 
         Ok(())
     }
+
+    pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> Result<()> {
+        let payload = serde_json::to_string(payload)?;
+        self.send_raw_scheduled(&payload, delay).await
+    }
 }
+
+impl_queue_producer!(SqsProducer, String);
+impl_scheduled_queue_producer!(SqsProducer, String);
 
 pub struct SqsConsumer {
     client: Client,
@@ -201,12 +215,8 @@ impl SqsConsumer {
             payload: Some(message.body().unwrap_or_default().as_bytes().to_owned()),
         }
     }
-}
 
-impl QueueConsumer for SqsConsumer {
-    type Payload = String;
-
-    async fn receive(&mut self) -> Result<Delivery> {
+    pub async fn receive(&mut self) -> Result<Delivery> {
         let out = self
             .client
             .receive_message()
@@ -223,7 +233,7 @@ impl QueueConsumer for SqsConsumer {
             .ok_or(QueueError::NoData)?
     }
 
-    async fn receive_all(
+    pub async fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
@@ -246,3 +256,5 @@ impl QueueConsumer for SqsConsumer {
             .collect::<Result<Vec<_>, _>>()
     }
 }
+
+impl_queue_consumer!(SqsConsumer, String);

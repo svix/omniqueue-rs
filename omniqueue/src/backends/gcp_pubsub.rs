@@ -1,6 +1,6 @@
 use crate::{
     builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
+    queue::{Acker, Delivery, QueueBackend},
     QueueError, Result,
 };
 use async_trait::async_trait;
@@ -116,20 +116,8 @@ impl GcpPubSubProducer {
             topic_id: Arc::new(topic_id),
         })
     }
-}
 
-impl std::fmt::Debug for GcpPubSubProducer {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.debug_struct("GcpPubSubProducer")
-            .field("topic_id", &self.topic_id)
-            .finish()
-    }
-}
-
-impl QueueProducer for GcpPubSubProducer {
-    type Payload = Payload;
-
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         let msg = PubsubMessage {
             data: payload.to_vec(),
             ..Default::default()
@@ -155,10 +143,20 @@ impl QueueProducer for GcpPubSubProducer {
         Ok(())
     }
 
-    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
         self.send_raw(&serde_json::to_vec(&payload)?).await
     }
 }
+
+impl std::fmt::Debug for GcpPubSubProducer {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("GcpPubSubProducer")
+            .field("topic_id", &self.topic_id)
+            .finish()
+    }
+}
+
+impl_queue_producer!(GcpPubSubProducer, Payload);
 
 pub struct GcpPubSubConsumer {
     client: Client,
@@ -171,6 +169,35 @@ impl GcpPubSubConsumer {
             client,
             subscription_id: Arc::new(subscription_id),
         })
+    }
+
+    pub async fn receive(&mut self) -> Result<Delivery> {
+        let subscription = subscription(&self.client, &self.subscription_id).await?;
+        let mut stream = subscription
+            .subscribe(None)
+            .await
+            .map_err(QueueError::generic)?;
+
+        let recv_msg = stream.next().await.ok_or_else(|| QueueError::NoData)?;
+
+        Ok(self.wrap_recv_msg(recv_msg))
+    }
+
+    pub async fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> Result<Vec<Delivery>> {
+        let subscription = subscription(&self.client, &self.subscription_id).await?;
+        match tokio::time::timeout(deadline, subscription.pull(max_messages as _, None)).await {
+            Ok(messages) => Ok(messages
+                .map_err(QueueError::generic)?
+                .into_iter()
+                .map(|m| self.wrap_recv_msg(m))
+                .collect()),
+            // Timeout
+            Err(_) => Ok(vec![]),
+        }
     }
 
     fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
@@ -212,38 +239,7 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
     Ok(subscription)
 }
 
-impl QueueConsumer for GcpPubSubConsumer {
-    type Payload = Payload;
-
-    async fn receive(&mut self) -> Result<Delivery> {
-        let subscription = subscription(&self.client, &self.subscription_id).await?;
-        let mut stream = subscription
-            .subscribe(None)
-            .await
-            .map_err(QueueError::generic)?;
-
-        let recv_msg = stream.next().await.ok_or_else(|| QueueError::NoData)?;
-
-        Ok(self.wrap_recv_msg(recv_msg))
-    }
-
-    async fn receive_all(
-        &mut self,
-        max_messages: usize,
-        deadline: Duration,
-    ) -> Result<Vec<Delivery>> {
-        let subscription = subscription(&self.client, &self.subscription_id).await?;
-        match tokio::time::timeout(deadline, subscription.pull(max_messages as _, None)).await {
-            Ok(messages) => Ok(messages
-                .map_err(QueueError::generic)?
-                .into_iter()
-                .map(|m| self.wrap_recv_msg(m))
-                .collect()),
-            // Timeout
-            Err(_) => Ok(vec![]),
-        }
-    }
-}
+impl_queue_consumer!(GcpPubSubConsumer, Payload);
 
 struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,

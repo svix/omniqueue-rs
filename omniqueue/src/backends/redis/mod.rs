@@ -35,13 +35,14 @@ use redis::{
     streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
     FromRedisValue, RedisResult,
 };
+use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use tokio::task::JoinSet;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, Result, ScheduledQueueProducer,
+    queue::{Acker, Delivery, QueueBackend},
+    QueueError, Result,
 };
 
 #[cfg(feature = "redis_cluster")]
@@ -542,10 +543,8 @@ pub struct RedisProducer<M: ManageConnection> {
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
-impl<R: RedisConnection> QueueProducer for RedisProducer<R> {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+impl<R: RedisConnection> RedisProducer<R> {
+    pub async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
         redis::Cmd::xadd(
             &self.queue_key,
@@ -558,41 +557,13 @@ impl<R: RedisConnection> QueueProducer for RedisProducer<R> {
 
         Ok(())
     }
-}
 
-/// Acts as a payload prefix for when payloads are written to zset keys.
-///
-/// This ensures that messages with identical payloads:
-/// - don't only get delivered once instead of N times.
-/// - don't replace each other's "delivery due" timestamp.
-fn delayed_key_id() -> RawPayload {
-    svix_ksuid::Ksuid::new(None, None).to_base62().into_bytes()
-}
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw(&payload).await
+    }
 
-/// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_delayed_queue_key(payload: &RawPayload) -> RawPayload {
-    // Base62-encoded KSUID is always 27 bytes long, 1 byte for separator.
-    let mut result = Vec::with_capacity(payload.len() + 28);
-
-    result.extend(delayed_key_id());
-    result.push(b'|');
-    result.extend(payload.iter().copied());
-    result
-}
-
-/// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &[u8]) -> Result<RawPayload> {
-    // All information is stored in the key in which the ID and JSON formatted task
-    // are separated by a `|`. So, take the key, then take the part after the `|`.
-    let sep_pos = key
-        .iter()
-        .position(|&byte| byte == b'|')
-        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    Ok(key[sep_pos + 1..].to_owned())
-}
-
-impl<R: RedisConnection> ScheduledQueueProducer for RedisProducer<R> {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let timestamp: i64 = (std::time::SystemTime::now() + delay)
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(QueueError::generic)?
@@ -612,6 +583,49 @@ impl<R: RedisConnection> ScheduledQueueProducer for RedisProducer<R> {
         tracing::trace!("RedisQueue: event sent > (delay: {:?})", delay);
         Ok(())
     }
+
+    pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw_scheduled(&payload, delay).await
+    }
+}
+
+impl_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
+impl_scheduled_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
+
+/// Acts as a payload prefix for when payloads are written to zset keys.
+///
+/// This ensures that messages with identical payloads:
+/// - don't only get delivered once instead of N times.
+/// - don't replace each other's "delivery due" timestamp.
+fn delayed_key_id() -> RawPayload {
+    svix_ksuid::Ksuid::new(None, None).to_base62().into_bytes()
+}
+
+/// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
+fn to_delayed_queue_key(payload: &[u8]) -> RawPayload {
+    // Base62-encoded KSUID is always 27 bytes long, 1 byte for separator.
+    let mut result = Vec::with_capacity(payload.len() + 28);
+
+    result.extend(delayed_key_id());
+    result.push(b'|');
+    result.extend(payload.iter().copied());
+    result
+}
+
+/// Returns the payload portion of a delayed zset key.
+fn from_delayed_queue_key(key: &[u8]) -> Result<RawPayload> {
+    // All information is stored in the key in which the ID and JSON formatted task
+    // are separated by a `|`. So, take the key, then take the part after the `|`.
+    let sep_pos = key
+        .iter()
+        .position(|&byte| byte == b'|')
+        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
+    Ok(key[sep_pos + 1..].to_owned())
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
@@ -640,12 +654,8 @@ impl<R: RedisConnection> RedisConsumer<R> {
             }),
         })
     }
-}
 
-impl<R: RedisConnection> QueueConsumer for RedisConsumer<R> {
-    type Payload = Vec<u8>;
-
-    async fn receive(&mut self) -> Result<Delivery> {
+    pub async fn receive(&mut self) -> Result<Delivery> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
 
         // Ensure an empty vec is never returned
@@ -667,7 +677,7 @@ impl<R: RedisConnection> QueueConsumer for RedisConsumer<R> {
         self.wrap_entry(entry)
     }
 
-    async fn receive_all(
+    pub async fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
@@ -701,3 +711,5 @@ impl<R: RedisConnection> QueueConsumer for RedisConsumer<R> {
         Ok(out)
     }
 }
+
+impl_queue_consumer!(RedisConsumer<R: RedisConnection>, Vec<u8>);

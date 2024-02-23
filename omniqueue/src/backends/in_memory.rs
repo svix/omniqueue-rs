@@ -6,8 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, Result, ScheduledQueueProducer,
+    queue::{Acker, Delivery, QueueBackend},
+    QueueError, Result,
 };
 
 pub struct InMemoryBackend;
@@ -50,23 +50,19 @@ pub struct InMemoryProducer {
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-impl QueueProducer for InMemoryProducer {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
-        self.tx.send(payload.clone()).map_err(QueueError::generic)
+impl InMemoryProducer {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+        self.tx.send(payload.to_vec()).map_err(QueueError::generic)
     }
 
-    async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw(&payload).await
     }
-}
 
-impl ScheduledQueueProducer for InMemoryProducer {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let tx = self.tx.clone();
-        let payload = payload.clone();
+        let payload = payload.to_vec();
         tokio::spawn(async move {
             tracing::trace!("MemoryQueue: event sent > (delay: {:?})", delay);
             tokio::time::sleep(delay).await;
@@ -76,7 +72,19 @@ impl ScheduledQueueProducer for InMemoryProducer {
         });
         Ok(())
     }
+
+    pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw_scheduled(&payload, delay).await
+    }
 }
+
+impl_queue_producer!(InMemoryProducer, Vec<u8>);
+impl_scheduled_queue_producer!(InMemoryProducer, Vec<u8>);
 
 pub struct InMemoryConsumer {
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -94,12 +102,8 @@ impl InMemoryConsumer {
             }),
         }
     }
-}
 
-impl QueueConsumer for InMemoryConsumer {
-    type Payload = Vec<u8>;
-
-    async fn receive(&mut self) -> Result<Delivery> {
+    pub async fn receive(&mut self) -> Result<Delivery> {
         let payload = self
             .rx
             .recv()
@@ -108,7 +112,7 @@ impl QueueConsumer for InMemoryConsumer {
         Ok(self.wrap_payload(payload))
     }
 
-    async fn receive_all(
+    pub async fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
@@ -134,6 +138,8 @@ impl QueueConsumer for InMemoryConsumer {
         Ok(out)
     }
 }
+
+impl_queue_consumer!(InMemoryConsumer, Vec<u8>);
 
 struct InMemoryAcker {
     tx: mpsc::UnboundedSender<Vec<u8>>,
@@ -173,9 +179,8 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
 
-    use crate::{QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer};
-
     use super::InMemoryBackend;
+    use crate::{QueueBuilder, QueueProducer};
 
     #[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
     struct TypeA {

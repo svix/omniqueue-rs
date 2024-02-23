@@ -44,10 +44,9 @@ impl DynProducer {
 }
 
 pub(crate) trait ErasedQueueProducer: Send + Sync {
-    #[allow(clippy::ptr_arg)] // for now
     fn send_raw<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
 
@@ -58,20 +57,21 @@ struct DynProducerInner<P> {
 impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
     fn send_raw<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move { self.inner.send_bytes(payload).await })
     }
 }
 
-impl QueueProducer for DynProducer {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+impl DynProducer {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.0.send_raw(payload).await
     }
 
-    fn into_dyn(self) -> DynProducer {
-        self
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw(&payload).await
     }
 }
+
+impl_queue_producer!(DynProducer, Vec<u8>);

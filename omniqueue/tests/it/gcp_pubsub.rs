@@ -58,7 +58,7 @@ use std::time::{Duration, Instant};
 
 use omniqueue::{
     backends::{GcpPubSubBackend, GcpPubSubConfig},
-    QueueBuilder, QueueConsumer, QueueProducer,
+    QueueBuilder,
 };
 use serde::{Deserialize, Serialize};
 
@@ -134,7 +134,7 @@ async fn test_raw_send_recv() {
     let payload = b"{\"test\": \"data\"}";
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
-    p.send_raw(&payload.to_vec()).await.unwrap();
+    p.send_raw(payload).await.unwrap();
 
     let d = c.receive().await.unwrap();
     assert_eq!(d.borrow_payload().unwrap(), payload);
@@ -142,6 +142,8 @@ async fn test_raw_send_recv() {
 
 #[tokio::test]
 async fn test_bytes_send_recv() {
+    use omniqueue::QueueProducer as _;
+
     let payload = b"hello";
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 

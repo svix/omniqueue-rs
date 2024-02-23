@@ -51,10 +51,9 @@ impl DynScheduledQueueProducer {
 }
 
 trait ErasedScheduledQueueProducer: ErasedQueueProducer {
-    #[allow(clippy::ptr_arg)] // for now
     fn send_raw_scheduled<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a [u8],
         delay: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
@@ -66,7 +65,7 @@ struct DynScheduledProducerInner<P> {
 impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInner<P> {
     fn send_raw<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move { self.inner.send_bytes(payload).await })
     }
@@ -75,27 +74,36 @@ impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInne
 impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledProducerInner<P> {
     fn send_raw_scheduled<'a>(
         &'a self,
-        payload: &'a Vec<u8>,
+        payload: &'a [u8],
         delay: Duration,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move { self.inner.send_bytes_scheduled(payload, delay).await })
     }
 }
 
-impl QueueProducer for DynScheduledQueueProducer {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+impl DynScheduledQueueProducer {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.0.send_raw(payload).await
     }
-}
 
-impl ScheduledQueueProducer for DynScheduledQueueProducer {
-    async fn send_raw_scheduled(&self, payload: &Vec<u8>, delay: Duration) -> Result<()> {
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw(&payload).await
+    }
+
+    pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         self.0.send_raw_scheduled(payload, delay).await
     }
 
-    fn into_dyn_scheduled(self) -> DynScheduledQueueProducer {
-        self
+    pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.0.send_raw_scheduled(&payload, delay).await
     }
 }
+
+impl_queue_producer!(DynScheduledQueueProducer, Vec<u8>);
+impl_scheduled_queue_producer!(DynScheduledQueueProducer, Vec<u8>);
