@@ -69,31 +69,6 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
     Client::new(config).await.map_err(QueueError::generic)
 }
 
-impl GcpPubSubConsumer {
-    async fn new(client: Client, subscription_id: String) -> Result<Self> {
-        Ok(Self {
-            client,
-            subscription_id: Arc::new(subscription_id),
-        })
-    }
-}
-
-impl GcpPubSubProducer {
-    async fn new(client: Client, topic_id: String) -> Result<Self> {
-        let topic = client.topic(&topic_id);
-        // Only warn if the topic doesn't exist at this point.
-        // If it gets created after the fact, we should be able to still use it when available,
-        // otherwise if it's still missing at that time, error.
-        if !topic.exists(None).await.map_err(QueueError::generic)? {
-            tracing::warn!("topic {} does not exist", &topic_id);
-        }
-        Ok(Self {
-            client,
-            topic_id: Arc::new(topic_id),
-        })
-    }
-}
-
 impl QueueBackend for GcpPubSubBackend {
     type Config = GcpPubSubConfig;
 
@@ -125,6 +100,22 @@ impl QueueBackend for GcpPubSubBackend {
 pub struct GcpPubSubProducer {
     client: Client,
     topic_id: Arc<String>,
+}
+
+impl GcpPubSubProducer {
+    async fn new(client: Client, topic_id: String) -> Result<Self> {
+        let topic = client.topic(&topic_id);
+        // Only warn if the topic doesn't exist at this point.
+        // If it gets created after the fact, we should be able to still use it when available,
+        // otherwise if it's still missing at that time, error.
+        if !topic.exists(None).await.map_err(QueueError::generic)? {
+            tracing::warn!("topic {} does not exist", &topic_id);
+        }
+        Ok(Self {
+            client,
+            topic_id: Arc::new(topic_id),
+        })
+    }
 }
 
 impl std::fmt::Debug for GcpPubSubProducer {
@@ -173,6 +164,32 @@ pub struct GcpPubSubConsumer {
     client: Client,
     subscription_id: Arc<String>,
 }
+
+impl GcpPubSubConsumer {
+    async fn new(client: Client, subscription_id: String) -> Result<Self> {
+        Ok(Self {
+            client,
+            subscription_id: Arc::new(subscription_id),
+        })
+    }
+
+    fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
+        // FIXME: would be nice to avoid having to move the data out here.
+        //   While it's possible to ack via a subscription and an ack_id, nack is only
+        //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
+        //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
+        let payload = recv_msg.message.data.drain(..).collect();
+
+        Delivery {
+            acker: Box::new(GcpPubSubAcker {
+                recv_msg,
+                subscription_id: self.subscription_id.clone(),
+            }),
+            payload: Some(payload),
+        }
+    }
+}
+
 impl std::fmt::Debug for GcpPubSubConsumer {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("GcpPubSubConsumer")
@@ -193,24 +210,6 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
         ));
     }
     Ok(subscription)
-}
-
-impl GcpPubSubConsumer {
-    fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
-        // FIXME: would be nice to avoid having to move the data out here.
-        //   While it's possible to ack via a subscription and an ack_id, nack is only
-        //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
-        //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
-        let payload = recv_msg.message.data.drain(..).collect();
-
-        Delivery {
-            acker: Box::new(GcpPubSubAcker {
-                recv_msg,
-                subscription_id: self.subscription_id.clone(),
-            }),
-            payload: Some(payload),
-        }
-    }
 }
 
 impl QueueConsumer for GcpPubSubConsumer {
