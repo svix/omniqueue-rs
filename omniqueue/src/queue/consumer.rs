@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
-use crate::{decoding::DecoderRegistry, QueueError, QueuePayload, Result};
+use crate::{QueuePayload, Result};
 
 use super::Delivery;
 
@@ -15,22 +15,19 @@ pub trait QueueConsumer: Send {
         deadline: Duration,
     ) -> impl Future<Output = Result<Vec<Delivery>>> + Send;
 
-    fn into_dyn(self, custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer
+    fn into_dyn(self) -> DynConsumer
     where
         Self: Sized + 'static,
     {
-        DynConsumer::new(self, custom_decoders)
+        DynConsumer::new(self)
     }
 }
 
 pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
 
 impl DynConsumer {
-    fn new(inner: impl QueueConsumer + 'static, custom_decoders: DecoderRegistry<Vec<u8>>) -> Self {
-        let c = DynConsumerInner {
-            inner,
-            custom_decoders,
-        };
+    fn new(inner: impl QueueConsumer + 'static) -> Self {
+        let c = DynConsumerInner { inner };
         Self(Box::new(c))
     }
 }
@@ -46,22 +43,14 @@ trait ErasedQueueConsumer: Send {
 
 struct DynConsumerInner<C> {
     inner: C,
-    custom_decoders: DecoderRegistry<Vec<u8>>,
 }
 
 impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
     fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>> {
         Box::pin(async move {
             let mut t_payload = self.inner.receive().await?;
-            let bytes_payload: Option<Vec<u8>> = match t_payload.payload_custom() {
-                Ok(b) => b,
-                Err(QueueError::NoDecoderForThisType) => t_payload.take_payload(),
-                Err(e) => return Err(e),
-            };
-
             Ok(Delivery {
-                payload: bytes_payload,
-                decoders: self.custom_decoders.clone(),
+                payload: t_payload.take_payload(),
                 acker: t_payload.acker,
             })
         })
@@ -76,14 +65,8 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
             let xs = self.inner.receive_all(max_messages, deadline).await?;
             let mut out = Vec::with_capacity(xs.len());
             for mut t_payload in xs {
-                let bytes_payload: Option<Vec<u8>> = match t_payload.payload_custom() {
-                    Ok(b) => b,
-                    Err(QueueError::NoDecoderForThisType) => t_payload.take_payload(),
-                    Err(e) => return Err(e),
-                };
                 out.push(Delivery {
-                    payload: bytes_payload,
-                    decoders: self.custom_decoders.clone(),
+                    payload: t_payload.take_payload(),
                     acker: t_payload.acker,
                 });
             }
@@ -107,7 +90,7 @@ impl QueueConsumer for DynConsumer {
         self.0.receive_all(max_messages, deadline).await
     }
 
-    fn into_dyn(self, _custom_decoders: DecoderRegistry<Vec<u8>>) -> DynConsumer {
+    fn into_dyn(self) -> DynConsumer {
         self
     }
 }

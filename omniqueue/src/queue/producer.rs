@@ -1,21 +1,11 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-};
+use std::{future::Future, pin::Pin};
 
 use serde::Serialize;
 
-use crate::{
-    encoding::{CustomEncoder, EncoderRegistry},
-    QueueError, QueuePayload, Result,
-};
+use crate::{QueuePayload, Result};
 
 pub trait QueueProducer: Send + Sync {
     type Payload: QueuePayload;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>>;
 
     fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send;
 
@@ -39,39 +29,19 @@ pub trait QueueProducer: Send + Sync {
         }
     }
 
-    fn send_custom<P: Send + Sync + 'static>(
-        &self,
-        payload: &P,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
-        async move {
-            let encoder = self
-                .get_custom_encoders()
-                .get(&TypeId::of::<P>())
-                .ok_or(QueueError::NoEncoderForThisType)?;
-            let payload = encoder.encode(payload)?;
-            self.send_raw(&payload).await
-        }
-    }
-
-    fn into_dyn(self, custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer
+    fn into_dyn(self) -> DynProducer
     where
         Self: Sized + 'static,
     {
-        DynProducer::new(self, custom_encoders)
+        DynProducer::new(self)
     }
 }
 
 pub struct DynProducer(Box<dyn ErasedQueueProducer>);
 
 impl DynProducer {
-    fn new(inner: impl QueueProducer + 'static, custom_encoders: EncoderRegistry<Vec<u8>>) -> Self {
-        let dyn_inner = DynProducerInner {
-            inner,
-            custom_encoders,
-        };
+    fn new(inner: impl QueueProducer + 'static) -> Self {
+        let dyn_inner = DynProducerInner { inner };
         Self(Box::new(dyn_inner))
     }
 }
@@ -82,12 +52,10 @@ pub(crate) trait ErasedQueueProducer: Send + Sync {
         &'a self,
         payload: &'a Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>>;
 }
 
 struct DynProducerInner<P> {
     inner: P,
-    custom_encoders: EncoderRegistry<Vec<u8>>,
 }
 
 impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
@@ -95,23 +63,7 @@ impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
         &'a self,
         payload: &'a Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            // Prioritize a custom encoder that takes a &[u8].
-            if let Some(encoder) = self
-                .inner
-                .get_custom_encoders()
-                .get(&TypeId::of::<Vec<u8>>())
-            {
-                let payload = encoder.encode(payload as &(dyn Any + Send + Sync))?;
-                self.inner.send_raw(&payload).await
-            } else {
-                self.inner.send_bytes(payload).await
-            }
-        })
-    }
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Vec<u8>>>> {
-        self.custom_encoders.as_ref()
+        Box::pin(async move { self.inner.send_bytes(payload).await })
     }
 }
 
@@ -122,11 +74,7 @@ impl QueueProducer for DynProducer {
         self.0.send_raw(payload).await
     }
 
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.0.get_custom_encoders()
-    }
-
-    fn into_dyn(self, _custom_encoders: EncoderRegistry<Vec<u8>>) -> DynProducer {
+    fn into_dyn(self) -> DynProducer {
         self
     }
 }

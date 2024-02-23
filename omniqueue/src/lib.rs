@@ -4,11 +4,8 @@
 //! of queue backends:
 //!
 //!   * Raw byte arrays in the way most compatible with the queue backend
-//!
 //!   * JSON encoded byte arrays for types that implement [`serde::Deserialize`] and
 //!     [`serde::Serialize`]
-//!
-//!   * Arbitrary types for which an encoder and/or decoder has been defined
 //!
 //! ## Cargo Features
 //!
@@ -84,42 +81,6 @@
 //! # anyhow::Ok(())
 //! # };
 //! ```
-//!
-//! ## Encoders/Decoders
-//!
-//! The [`encoding::CustomEncoder`]s and [`decoding::CustomDecoder`]s given to the builder upon
-//! producer/consumer creation will be used to convert from/to the queue's native representation
-//! into/from a given type. This helps enforce a separation of responsibilities where only the
-//! application setting up a concrete queue instance should ever have to think about the internal
-//! data-representation of items within the queue while abstract uses of queues should be able to
-//! work with simple Rust types.
-//!
-//! Any function or closure with the right signature may be used as an encoder or decoder.
-//!
-//! ```no_run
-//! # async {
-//! # let cfg = todo!();
-//! use omniqueue::backends::RabbitMqBackend;
-//!
-//! #[derive(Debug, PartialEq)]
-//! struct ExampleType {
-//!     field: u8,
-//! }
-//!
-//! let (p, mut c) = RabbitMqBackend::builder(cfg)
-//!     .with_encoder(|et: &ExampleType| -> omniqueue::Result<Vec<u8>> {
-//!         Ok(vec![et.field])
-//!     })
-//!     .with_decoder(|v: &Vec<u8>| -> omniqueue::Result<ExampleType> {
-//!         Ok(ExampleType {
-//!             field: *v.first().unwrap_or(&0),
-//!         })
-//!     })
-//!     .build_pair()
-//!     .await?;
-//! # anyhow::Ok(())
-//! # };
-//! ```
 #![warn(unreachable_pub)]
 
 use std::fmt::Debug;
@@ -128,8 +89,6 @@ use thiserror::Error;
 
 pub mod backends;
 pub mod builder;
-pub mod decoding;
-pub mod encoding;
 mod queue;
 mod scheduled;
 
@@ -155,13 +114,6 @@ pub enum QueueError {
     NoData,
     #[error("(de)serialization error")]
     Serde(#[from] serde_json::Error),
-
-    #[error("cannot decode into custom type without registered decoder")]
-    NoDecoderForThisType,
-    #[error("cannot encode into custom type without registered encoder")]
-    NoEncoderForThisType,
-    #[error("error downcasting to custom type")]
-    AnyError,
 
     #[error("{0}")]
     Generic(Box<dyn std::error::Error + Send + Sync>),

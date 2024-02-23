@@ -1,5 +1,4 @@
 use std::time::{Duration, Instant};
-use std::{any::TypeId, collections::HashMap};
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -7,8 +6,6 @@ use tokio::sync::mpsc;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    decoding::DecoderRegistry,
-    encoding::{CustomEncoder, EncoderRegistry},
     queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
     QueueError, Result, ScheduledQueueProducer,
 };
@@ -31,52 +28,30 @@ impl QueueBackend for InMemoryBackend {
 
     type Config = ();
 
-    async fn new_pair(
-        _config: (),
-        custom_encoders: EncoderRegistry<Vec<u8>>,
-        custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<(InMemoryProducer, InMemoryConsumer)> {
+    async fn new_pair(_config: ()) -> Result<(InMemoryProducer, InMemoryConsumer)> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         Ok((
-            InMemoryProducer {
-                registry: custom_encoders,
-                tx: tx.clone(),
-            },
-            InMemoryConsumer {
-                registry: custom_decoders,
-                tx,
-                rx,
-            },
+            InMemoryProducer { tx: tx.clone() },
+            InMemoryConsumer { tx, rx },
         ))
     }
 
-    async fn producing_half(
-        _config: (),
-        _custom_encoders: EncoderRegistry<Vec<u8>>,
-    ) -> Result<InMemoryProducer> {
+    async fn producing_half(_config: ()) -> Result<InMemoryProducer> {
         Err(QueueError::CannotCreateHalf)
     }
 
-    async fn consuming_half(
-        _config: (),
-        _custom_decoders: DecoderRegistry<Vec<u8>>,
-    ) -> Result<InMemoryConsumer> {
+    async fn consuming_half(_config: ()) -> Result<InMemoryConsumer> {
         Err(QueueError::CannotCreateHalf)
     }
 }
 
 pub struct InMemoryProducer {
-    registry: EncoderRegistry<Vec<u8>>,
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl QueueProducer for InMemoryProducer {
     type Payload = Vec<u8>;
-
-    fn get_custom_encoders(&self) -> &HashMap<TypeId, Box<dyn CustomEncoder<Self::Payload>>> {
-        self.registry.as_ref()
-    }
 
     async fn send_raw(&self, payload: &Self::Payload) -> Result<()> {
         self.tx.send(payload.clone()).map_err(QueueError::generic)
@@ -104,7 +79,6 @@ impl ScheduledQueueProducer for InMemoryProducer {
 }
 
 pub struct InMemoryConsumer {
-    registry: DecoderRegistry<Vec<u8>>,
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
     tx: mpsc::UnboundedSender<Vec<u8>>,
 }
@@ -113,7 +87,6 @@ impl InMemoryConsumer {
     fn wrap_payload(&self, payload: Vec<u8>) -> Delivery {
         Delivery {
             payload: Some(payload.clone()),
-            decoders: self.registry.clone(),
             acker: Box::new(InMemoryAcker {
                 tx: self.tx.clone(),
                 payload_copy: Some(payload),
@@ -200,7 +173,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
 
-    use crate::{QueueBuilder, QueueConsumer, QueueProducer, Result, ScheduledQueueProducer};
+    use crate::{QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer};
 
     use super::InMemoryBackend;
 
@@ -209,35 +182,12 @@ mod tests {
         a: i32,
     }
 
-    fn type_a_to_json(a: &TypeA) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(a)?)
-    }
-
-    /// Unfortunately type restrictions require this for now
-    #[allow(clippy::ptr_arg)]
-    fn json_to_type_a(json: &Vec<u8>) -> Result<TypeA> {
-        Ok(serde_json::from_slice(json)?)
-    }
-
     #[tokio::test]
     async fn simple_queue_test() {
         let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .with_encoder(type_a_to_json)
-            .with_decoder(json_to_type_a)
             .build_pair()
             .await
             .unwrap();
-
-        p.send_custom(&TypeA { a: 12 }).await.unwrap();
-        assert_eq!(
-            c.receive()
-                .await
-                .unwrap()
-                .payload_custom::<TypeA>()
-                .unwrap()
-                .unwrap(),
-            TypeA { a: 12 }
-        );
 
         p.send_serde_json(&TypeA { a: 13 }).await.unwrap();
         assert_eq!(
@@ -257,28 +207,6 @@ mod tests {
             serde_json::from_slice::<TypeA>(c.receive().await.unwrap().borrow_payload().unwrap())
                 .unwrap(),
             TypeA { a: 14 },
-        );
-    }
-
-    #[tokio::test]
-    async fn dynamic_queue_test() {
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .make_dynamic()
-            .with_bytes_encoder(|a: &TypeA| Ok(serde_json::to_vec(a)?))
-            .with_bytes_decoder(|b: &Vec<u8>| -> Result<TypeA> { Ok(serde_json::from_slice(b)?) })
-            .build_pair()
-            .await
-            .unwrap();
-
-        p.send_custom(&TypeA { a: 12 }).await.unwrap();
-        assert_eq!(
-            c.receive()
-                .await
-                .unwrap()
-                .payload_custom::<TypeA>()
-                .unwrap()
-                .unwrap(),
-            TypeA { a: 12 }
         );
     }
 

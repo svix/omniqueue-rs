@@ -169,35 +169,6 @@ async fn test_serde_send_recv() {
     d.ack().await.unwrap();
 }
 
-#[tokio::test]
-async fn test_custom_send_recv() {
-    let payload = ExType { a: 3 };
-
-    let encoder = |p: &ExType| Ok(vec![p.a]);
-    let decoder = |p: &Vec<u8>| {
-        Ok(ExType {
-            a: p.first().copied().unwrap_or(0),
-        })
-    };
-
-    let (p, mut c) = make_test_queue()
-        .await
-        .with_encoder(encoder)
-        .with_decoder(decoder)
-        .build_pair()
-        .await
-        .unwrap();
-
-    p.send_custom(&payload).await.unwrap();
-
-    let d = c.receive().await.unwrap();
-    assert_eq!(d.payload_custom::<ExType>().unwrap().unwrap(), payload);
-
-    // Because it doesn't use JSON, this should fail:
-    d.payload_serde_json::<ExType>().unwrap_err();
-    d.ack().await.unwrap();
-}
-
 /// Consumer will return immediately if there are fewer than max messages to start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
