@@ -4,7 +4,7 @@ use crate::{QueuePayload, Result};
 
 use super::Delivery;
 
-pub trait QueueConsumer: Send {
+pub trait QueueConsumer: Send + Sized {
     type Payload: QueuePayload;
 
     fn receive(&mut self) -> impl Future<Output = Result<Delivery>> + Send;
@@ -17,7 +17,7 @@ pub trait QueueConsumer: Send {
 
     fn into_dyn(self) -> DynConsumer
     where
-        Self: Sized + 'static,
+        Self: 'static,
     {
         DynConsumer::new(self)
     }

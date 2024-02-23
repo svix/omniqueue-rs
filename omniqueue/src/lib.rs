@@ -122,12 +122,12 @@ pub enum QueueError {
 }
 
 impl QueueError {
-    pub fn generic<E: 'static + std::error::Error + Send + Sync>(e: E) -> Self {
+    pub fn generic<E: std::error::Error + Send + Sync + 'static>(e: E) -> Self {
         Self::Generic(Box::new(e))
     }
 }
 
-pub trait QueuePayload: 'static + Send + Sync {
+pub trait QueuePayload: Send + Sync + 'static {
     fn to_bytes_naive(&self) -> Result<Vec<u8>>;
     fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>>;
 }

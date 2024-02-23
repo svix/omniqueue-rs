@@ -26,10 +26,7 @@ pub trait ScheduledQueueProducer: QueueProducer {
         &self,
         payload: &P,
         delay: Duration,
-    ) -> impl Future<Output = Result<()>> + Send
-    where
-        Self: Sized,
-    {
+    ) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = serde_json::to_vec(payload)?;
             self.send_bytes_scheduled(&payload, delay).await
@@ -38,7 +35,7 @@ pub trait ScheduledQueueProducer: QueueProducer {
 
     fn into_dyn_scheduled(self) -> DynScheduledQueueProducer
     where
-        Self: Sized + 'static,
+        Self: 'static,
     {
         DynScheduledQueueProducer::new(self)
     }
