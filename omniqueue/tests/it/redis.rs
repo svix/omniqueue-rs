@@ -43,6 +43,7 @@ async fn make_test_queue() -> (QueueBuilder<RedisBackend>, RedisStreamDrop) {
         reinsert_on_nack: false,
         queue_key: stream_name.clone(),
         delayed_queue_key: format!("{stream_name}::delayed"),
+        delayed_lock_key: format!("{stream_name}::delayed_lock"),
         consumer_group: "test_cg".to_owned(),
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
