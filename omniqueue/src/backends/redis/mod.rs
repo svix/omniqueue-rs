@@ -216,8 +216,8 @@ async fn start_background_tasks<R: RedisConnection>(
                 loop {
                     if let Err(err) = background_task_delayed(
                         pool.clone(),
-                        queue_key.clone(),
-                        delayed_queue_key.clone(),
+                        &queue_key,
+                        &delayed_queue_key,
                         &delayed_lock_key,
                         &payload_key,
                     )
@@ -268,8 +268,8 @@ const LISTEN_STREAM_ID: &str = ">";
 /// Moves "due" messages from a sorted set, where delayed messages are shelved, back onto the main queue.
 async fn background_task_delayed<R: RedisConnection>(
     pool: bb8::Pool<R>,
-    main_queue_name: String,
-    delayed_queue_name: String,
+    main_queue_name: &str,
+    delayed_queue_name: &str,
     delayed_lock: &str,
     payload_key: &str,
 ) -> Result<()> {
@@ -302,7 +302,7 @@ async fn background_task_delayed<R: RedisConnection>(
             .map_err(QueueError::generic)?;
 
         let keys: Vec<RawPayload> = redis::Cmd::zrangebyscore_limit(
-            &delayed_queue_name,
+            delayed_queue_name,
             0isize,
             // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
             // preventing premature delivery.
@@ -324,7 +324,7 @@ async fn background_task_delayed<R: RedisConnection>(
                 // before the value hits the wire anyway.
                 let payload = from_delayed_queue_key(key)?;
                 let _ = pipe.xadd(
-                    &main_queue_name,
+                    main_queue_name,
                     GENERATE_STREAM_ID,
                     &[(payload_key, payload)],
                 );
@@ -335,7 +335,7 @@ async fn background_task_delayed<R: RedisConnection>(
                 .map_err(QueueError::generic)?;
 
             // Then remove the tasks from the delayed queue so they aren't resent
-            let _: () = redis::Cmd::zrem(&delayed_queue_name, keys)
+            let _: () = redis::Cmd::zrem(delayed_queue_name, keys)
                 .query_async(&mut *conn)
                 .await
                 .map_err(QueueError::generic)?;
