@@ -339,7 +339,7 @@ async fn background_task_delayed<R: RedisConnection>(
             .try_into()
             .map_err(QueueError::generic)?;
 
-        let keys: Vec<String> = redis::Cmd::zrangebyscore_limit(
+        let keys: Vec<RawPayload> = redis::Cmd::zrangebyscore_limit(
             &delayed_queue_name,
             0isize,
             // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
@@ -565,29 +565,30 @@ impl<R: RedisConnection> QueueProducer for RedisProducer<R> {
 /// This ensures that messages with identical payloads:
 /// - don't only get delivered once instead of N times.
 /// - don't replace each other's "delivery due" timestamp.
-fn delayed_key_id() -> String {
-    svix_ksuid::Ksuid::new(None, None).to_base62()
+fn delayed_key_id() -> RawPayload {
+    svix_ksuid::Ksuid::new(None, None).to_base62().into_bytes()
 }
 
 /// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_delayed_queue_key(payload: &RawPayload) -> Result<String> {
-    Ok(format!(
-        "{}|{}",
-        delayed_key_id(),
-        serde_json::to_string(payload).map_err(QueueError::generic)?
-    ))
+fn to_delayed_queue_key(payload: &RawPayload) -> RawPayload {
+    // Base62-encoded KSUID is always 27 bytes long, 1 byte for separator.
+    let mut result = Vec::with_capacity(payload.len() + 28);
+
+    result.extend(delayed_key_id());
+    result.push(b'|');
+    result.extend(payload.iter().copied());
+    result
 }
 
 /// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &str) -> Result<RawPayload> {
+fn from_delayed_queue_key(key: &[u8]) -> Result<RawPayload> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
-    serde_json::from_str(
-        key.split('|')
-            .nth(1)
-            .ok_or_else(|| QueueError::Generic("Improper key format".into()))?,
-    )
-    .map_err(QueueError::generic)
+    let sep_pos = key
+        .iter()
+        .position(|&byte| byte == b'|')
+        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
+    Ok(key[sep_pos + 1..].to_owned())
 }
 
 impl<R: RedisConnection> ScheduledQueueProducer for RedisProducer<R> {
@@ -602,7 +603,7 @@ impl<R: RedisConnection> ScheduledQueueProducer for RedisProducer<R> {
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
         redis::Cmd::zadd(
             &self.delayed_queue_key,
-            to_delayed_queue_key(payload)?,
+            to_delayed_queue_key(payload),
             timestamp,
         )
         .query_async(&mut *conn)
