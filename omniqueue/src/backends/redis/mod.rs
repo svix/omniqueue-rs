@@ -86,6 +86,7 @@ pub struct RedisConfig {
     pub reinsert_on_nack: bool,
     pub queue_key: String,
     pub delayed_queue_key: String,
+    pub delayed_lock_key: String,
     pub consumer_group: String,
     pub consumer_name: String,
     pub payload_key: String,
@@ -123,18 +124,7 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(
-            start_background_tasks(
-                redis.clone(),
-                &cfg.queue_key,
-                &cfg.delayed_queue_key,
-                &cfg.payload_key,
-                &cfg.consumer_group,
-                &cfg.consumer_name,
-                cfg.ack_deadline_ms,
-            )
-            .await,
-        );
+        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
 
         Ok((
             RedisProducer {
@@ -163,18 +153,7 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(
-            start_background_tasks(
-                redis.clone(),
-                &cfg.queue_key,
-                &cfg.delayed_queue_key,
-                &cfg.payload_key,
-                &cfg.consumer_group,
-                &cfg.consumer_name,
-                cfg.ack_deadline_ms,
-            )
-            .await,
-        );
+        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
         Ok(RedisProducer {
             redis,
             queue_key: cfg.queue_key,
@@ -192,18 +171,7 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(
-            start_background_tasks(
-                redis.clone(),
-                &cfg.queue_key,
-                &cfg.delayed_queue_key,
-                &cfg.payload_key,
-                &cfg.consumer_group,
-                &cfg.consumer_name,
-                cfg.ack_deadline_ms,
-            )
-            .await,
-        );
+        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
 
         Ok(RedisConsumer {
             redis,
@@ -223,39 +191,34 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
 //   Doing my own thing for now - standalone function that takes what it needs.
 async fn start_background_tasks<R: RedisConnection>(
     redis: bb8::Pool<R>,
-    queue_key: &str,
-    delayed_queue_key: &str,
-    payload_key: &str,
-    consumer_group: &str,
-    consumer_name: &str,
-    task_timeout_ms: i64,
+    cfg: &RedisConfig,
 ) -> JoinSet<Result<()>> {
     let mut join_set = JoinSet::new();
 
     // FIXME(onelson): does it even make sense to treat delay support as optional here?
-    if delayed_queue_key.is_empty() {
+    if cfg.delayed_queue_key.is_empty() {
         tracing::warn!("no delayed_queue_key specified - delayed task scheduler disabled");
     } else {
         join_set.spawn({
             let pool = redis.clone();
-            let mqn = queue_key.to_string();
-            let dqn = delayed_queue_key.to_string();
-            // FIXME(onelson): should delayed_lock be configurable?
-            //   Should `delayed_queue_name` even? Could be a suffix on `queue_name`.
-            let delayed_lock = format!("{delayed_queue_key}__lock");
-            let payload_key = payload_key.to_string();
+            let queue_key = cfg.queue_key.to_owned();
+            let delayed_queue_key = cfg.delayed_queue_key.to_owned();
+            let delayed_lock_key = cfg.delayed_lock_key.to_owned();
+            let payload_key = cfg.payload_key.to_owned();
+
             tracing::debug!(
-                "spawning delayed task scheduler: delayed_queue_key=`{delayed_queue_key}`, \
-                 delayed_lock=`{delayed_lock}`"
+                delayed_queue_key,
+                delayed_lock_key,
+                "spawning delayed task scheduler"
             );
 
             async move {
                 loop {
                     if let Err(err) = background_task_delayed(
                         pool.clone(),
-                        mqn.clone(),
-                        dqn.clone(),
-                        &delayed_lock,
+                        queue_key.clone(),
+                        delayed_queue_key.clone(),
+                        &delayed_lock_key,
                         &payload_key,
                     )
                     .await
@@ -271,17 +234,16 @@ async fn start_background_tasks<R: RedisConnection>(
 
     join_set.spawn({
         let pool = redis.clone();
-
-        let mqn = queue_key.to_string();
-        // FIXME(onelson): expose in config and confirm this is milliseconds
-        let consumer_group = consumer_group.to_string();
-        let consumer_name = consumer_name.to_string();
+        let queue_key = cfg.queue_key.to_owned();
+        let consumer_group = cfg.consumer_group.to_owned();
+        let consumer_name = cfg.consumer_name.to_owned();
+        let task_timeout_ms = cfg.ack_deadline_ms;
 
         async move {
             loop {
                 if let Err(err) = background_task_pending(
                     pool.clone(),
-                    &mqn,
+                    &queue_key,
                     &consumer_group,
                     &consumer_name,
                     task_timeout_ms,
