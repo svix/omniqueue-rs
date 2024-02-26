@@ -286,7 +286,7 @@ async fn background_task_delayed<R: RedisConnection>(
         .arg("NX")
         .arg("PX")
         .arg(5000);
-    // WIll be Some("OK") when set or None when not set
+    // Will be Some("OK") when set or None when not set
     let resp: Option<String> = cmd
         .query_async(&mut *conn)
         .await
