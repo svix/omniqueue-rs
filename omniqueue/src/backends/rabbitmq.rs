@@ -12,11 +12,12 @@ pub use lapin::{
     types::FieldTable,
     BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
 };
+use serde::Serialize;
 
 use crate::{
     builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend, QueueConsumer, QueueProducer},
-    QueueError, Result, ScheduledQueueProducer,
+    queue::{Acker, Delivery, QueueBackend},
+    QueueError, Result,
 };
 
 #[derive(Clone)]
@@ -127,10 +128,8 @@ pub struct RabbitMqProducer {
     properties: BasicProperties,
 }
 
-impl QueueProducer for RabbitMqProducer {
-    type Payload = Vec<u8>;
-
-    async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+impl RabbitMqProducer {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.channel
             .basic_publish(
                 &self.exchange,
@@ -144,10 +143,13 @@ impl QueueProducer for RabbitMqProducer {
 
         Ok(())
     }
-}
 
-impl ScheduledQueueProducer for RabbitMqProducer {
-    async fn send_raw_scheduled(&self, payload: &Self::Payload, delay: Duration) -> Result<()> {
+    pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw(&payload).await
+    }
+
+    pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let mut headers = FieldTable::default();
 
         let delay_ms: u32 = delay
@@ -169,7 +171,19 @@ impl ScheduledQueueProducer for RabbitMqProducer {
 
         Ok(())
     }
+
+    pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> Result<()> {
+        let payload = serde_json::to_vec(payload)?;
+        self.send_raw_scheduled(&payload, delay).await
+    }
 }
+
+impl_queue_producer!(RabbitMqProducer, Vec<u8>);
+impl_scheduled_queue_producer!(RabbitMqProducer, Vec<u8>);
 
 pub struct RabbitMqConsumer {
     consumer: Consumer,
@@ -186,12 +200,8 @@ impl RabbitMqConsumer {
             }),
         }
     }
-}
 
-impl QueueConsumer for RabbitMqConsumer {
-    type Payload = Vec<u8>;
-
-    async fn receive(&mut self) -> Result<Delivery> {
+    pub async fn receive(&mut self) -> Result<Delivery> {
         let mut stream =
             self.consumer
                 .clone()
@@ -203,7 +213,7 @@ impl QueueConsumer for RabbitMqConsumer {
         stream.next().await.ok_or(QueueError::NoData)?
     }
 
-    async fn receive_all(
+    pub async fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
@@ -235,6 +245,8 @@ impl QueueConsumer for RabbitMqConsumer {
         Ok(out)
     }
 }
+
+impl_queue_consumer!(RabbitMqConsumer, Vec<u8>);
 
 struct RabbitMqAcker {
     acker: Option<LapinAcker>,

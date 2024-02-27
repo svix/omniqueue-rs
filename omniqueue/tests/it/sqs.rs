@@ -1,7 +1,7 @@
 use aws_sdk_sqs::Client;
 use omniqueue::{
     backends::{SqsBackend, SqsConfig},
-    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
+    QueueBuilder,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -51,7 +51,7 @@ async fn test_raw_send_recv() {
     let payload = "{\"test\": \"data\"}";
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
-    p.send_raw(&payload.to_owned()).await.unwrap();
+    p.send_raw(payload).await.unwrap();
 
     let d = c.receive().await.unwrap();
     assert_eq!(d.borrow_payload().unwrap(), payload.as_bytes());
@@ -59,6 +59,8 @@ async fn test_raw_send_recv() {
 
 #[tokio::test]
 async fn test_bytes_send_recv() {
+    use omniqueue::QueueProducer as _;
+
     let payload = b"hello";
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 

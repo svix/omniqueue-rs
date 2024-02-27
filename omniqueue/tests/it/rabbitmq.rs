@@ -7,7 +7,7 @@ use lapin::{
 };
 use omniqueue::{
     backends::{RabbitMqBackend, RabbitMqConfig},
-    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
+    QueueBuilder,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -100,6 +100,8 @@ async fn make_test_queue(
 
 #[tokio::test]
 async fn test_bytes_send_recv() {
+    use omniqueue::QueueProducer as _;
+
     let payload = b"hello";
     let (p, mut c) = make_test_queue(None, false)
         .await
@@ -114,7 +116,7 @@ async fn test_bytes_send_recv() {
     d.ack().await.unwrap();
 
     // The RabbitMQ native payload type is a Vec<u8>, so we can also send raw
-    p.send_raw(&payload.to_vec()).await.unwrap();
+    p.send_raw(payload).await.unwrap();
 
     let d = c.receive().await.unwrap();
     assert_eq!(d.borrow_payload().unwrap(), payload);

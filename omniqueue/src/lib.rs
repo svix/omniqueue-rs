@@ -47,7 +47,7 @@
 //! Sending and receiving information from this queue is simple:
 //!
 //! ```no_run
-//! # use omniqueue::{backends::SqsBackend, QueueConsumer, QueueProducer};
+//! # use omniqueue::backends::SqsBackend;
 //! # async {
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
@@ -86,6 +86,9 @@
 use std::fmt::Debug;
 
 use thiserror::Error;
+
+#[macro_use]
+mod macros;
 
 pub mod backends;
 pub mod builder;

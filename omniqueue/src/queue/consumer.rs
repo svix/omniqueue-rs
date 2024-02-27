@@ -75,22 +75,18 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
     }
 }
 
-impl QueueConsumer for DynConsumer {
-    type Payload = Vec<u8>;
-
-    async fn receive(&mut self) -> Result<Delivery> {
+impl DynConsumer {
+    pub async fn receive(&mut self) -> Result<Delivery> {
         self.0.receive().await
     }
 
-    async fn receive_all(
+    pub async fn receive_all(
         &mut self,
         max_messages: usize,
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
         self.0.receive_all(max_messages, deadline).await
     }
-
-    fn into_dyn(self) -> DynConsumer {
-        self
-    }
 }
+
+impl_queue_consumer!(DynConsumer, Vec<u8>);

@@ -1,6 +1,6 @@
 use omniqueue::{
     backends::{RedisBackend, RedisConfig},
-    QueueBuilder, QueueConsumer, QueueProducer, ScheduledQueueProducer,
+    QueueBuilder,
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,8 @@ async fn test_raw_send_recv() {
 
 #[tokio::test]
 async fn test_bytes_send_recv() {
+    use omniqueue::QueueProducer as _;
+
     let (builder, _drop) = make_test_queue().await;
     let payload = b"hello";
     let (p, mut c) = builder.build_pair().await.unwrap();
