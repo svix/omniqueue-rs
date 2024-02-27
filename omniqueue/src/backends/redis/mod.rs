@@ -477,13 +477,15 @@ impl<R: RedisConnection> Acker for RedisAcker<R> {
 
         self.already_acked_or_nacked = true;
 
+        let mut pipeline = redis::pipe();
+        pipeline.xack(&self.queue_key, &self.consumer_group, &[&self.entry_id]);
+        pipeline.xdel(&self.queue_key, &[&self.entry_id]);
+
         let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-        redis::Cmd::xack(&self.queue_key, &self.consumer_group, &[&self.entry_id])
+        pipeline
             .query_async(&mut *conn)
             .await
-            .map_err(QueueError::generic)?;
-
-        Ok(())
+            .map_err(QueueError::generic)
     }
 
     async fn nack(&mut self) -> Result<()> {
