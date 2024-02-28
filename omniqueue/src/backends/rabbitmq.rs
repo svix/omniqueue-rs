@@ -13,6 +13,8 @@ pub use lapin::{
     BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
 };
 use serde::Serialize;
+use svix_ksuid::{KsuidLike as _, KsuidMs};
+use time::OffsetDateTime;
 
 use crate::{
     builder::{QueueBuilder, Static},
@@ -129,19 +131,36 @@ pub struct RabbitMqProducer {
 }
 
 impl RabbitMqProducer {
-    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+    async fn send_raw_with_headers(
+        &self,
+        payload: &[u8],
+        headers: Option<FieldTable>,
+    ) -> Result<()> {
+        let mut properties = self.properties.clone();
+        if cfg!(feature = "rabbitmq-with-message-ids") {
+            let id = &KsuidMs::new(Some(OffsetDateTime::now_utc()), None);
+            properties = properties.with_message_id(id.to_string().into());
+        }
+        if let Some(headers) = headers {
+            properties = properties.with_headers(headers);
+        }
+
         self.channel
             .basic_publish(
                 &self.exchange,
                 &self.routing_key,
                 self.options,
                 payload,
-                self.properties.clone(),
+                properties,
             )
             .await
             .map_err(QueueError::generic)?;
 
         Ok(())
+    }
+
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+        self.send_raw_with_headers(payload, None).await
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
@@ -158,18 +177,7 @@ impl RabbitMqProducer {
             .map_err(|_| QueueError::Generic("delay is too large".into()))?;
         headers.insert("x-delay".into(), AMQPValue::LongUInt(delay_ms));
 
-        self.channel
-            .basic_publish(
-                &self.exchange,
-                &self.routing_key,
-                self.options,
-                payload,
-                self.properties.clone().with_headers(headers),
-            )
-            .await
-            .map_err(QueueError::generic)?;
-
-        Ok(())
+        self.send_raw_with_headers(payload, Some(headers)).await
     }
 
     pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
