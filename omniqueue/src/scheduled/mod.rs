@@ -33,17 +33,17 @@ pub trait ScheduledQueueProducer: QueueProducer {
         }
     }
 
-    fn into_dyn_scheduled(self) -> DynScheduledQueueProducer
+    fn into_dyn_scheduled(self) -> DynScheduledProducer
     where
         Self: 'static,
     {
-        DynScheduledQueueProducer::new(self)
+        DynScheduledProducer::new(self)
     }
 }
 
-pub struct DynScheduledQueueProducer(Box<dyn ErasedScheduledQueueProducer>);
+pub struct DynScheduledProducer(Box<dyn ErasedScheduledQueueProducer>);
 
-impl DynScheduledQueueProducer {
+impl DynScheduledProducer {
     fn new(inner: impl ScheduledQueueProducer + 'static) -> Self {
         let dyn_inner = DynScheduledProducerInner { inner };
         Self(Box::new(dyn_inner))
@@ -81,7 +81,7 @@ impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledPro
     }
 }
 
-impl DynScheduledQueueProducer {
+impl DynScheduledProducer {
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.0.send_raw(payload).await
     }
@@ -105,5 +105,5 @@ impl DynScheduledQueueProducer {
     }
 }
 
-impl_queue_producer!(DynScheduledQueueProducer, Vec<u8>);
-impl_scheduled_queue_producer!(DynScheduledQueueProducer, Vec<u8>);
+impl_queue_producer!(DynScheduledProducer, Vec<u8>);
+impl_scheduled_queue_producer!(DynScheduledProducer, Vec<u8>);
