@@ -13,6 +13,8 @@ pub use lapin::{
     BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
 };
 use serde::Serialize;
+use svix_ksuid::{KsuidLike as _, KsuidMs};
+use time::OffsetDateTime;
 
 use crate::{
     builder::{QueueBuilder, Static},
@@ -135,6 +137,10 @@ impl RabbitMqProducer {
         headers: Option<FieldTable>,
     ) -> Result<()> {
         let mut properties = self.properties.clone();
+        if cfg!(feature = "rabbitmq-with-message-ids") {
+            let id = &KsuidMs::new(Some(OffsetDateTime::now_utc()), None);
+            properties = properties.with_message_id(id.to_string().into());
+        }
         if let Some(headers) = headers {
             properties = properties.with_headers(headers);
         }
