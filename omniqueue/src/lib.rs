@@ -98,7 +98,7 @@ mod scheduled;
 pub use self::{
     builder::QueueBuilder,
     queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},
-    scheduled::{DynScheduledQueueProducer, ScheduledQueueProducer},
+    scheduled::{DynScheduledProducer, ScheduledQueueProducer},
 };
 
 /// Type alias for std's `Result` with the error type defaulting to omniqueue's
