@@ -1,8 +1,7 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
-use crate::{QueuePayload, Result};
-
 use super::Delivery;
+use crate::{QueuePayload, Result};
 
 pub trait QueueConsumer: Send + Sized {
     type Payload: QueuePayload;

@@ -2,28 +2,31 @@
 //!
 //! In this system subscriptions are like queue bindings to topics.
 //! Consumers need a subscription id to start receiving messages.
-//! We don't have any public API for managing/creating/deleting subscriptions in this module, so
-//! this is left to the user to do via whatever method they like.
+//! We don't have any public API for managing/creating/deleting subscriptions in
+//! this module, so this is left to the user to do via whatever method they
+//! like.
 //!
 //! - <https://cloud.google.com/pubsub/docs/create-topic>
 //! - <https://cloud.google.com/pubsub/docs/create-subscription#pubsub_create_push_subscription-gcloud>
-//! - <https://cloud.google.com/pubsub/docs/publisher> (how to publish messages ad hoc, helpful for debugging)
+//! - <https://cloud.google.com/pubsub/docs/publisher> (how to publish messages
+//!   ad hoc, helpful for debugging)
 //!
 //! Don't have a better place to mention this just yet.
-//! When testing against the gcloud emulator, you need to set `PUBSUB_EMULATOR_HOST` to the bind
-//! address, and `PUBSUB_PROJECT_ID` (matching however the emulator was configured).
-//! This should bypass the need for credentials and so on.
-//! ```sh
+//! When testing against the gcloud emulator, you need to set
+//! `PUBSUB_EMULATOR_HOST` to the bind address, and `PUBSUB_PROJECT_ID`
+//! (matching however the emulator was configured). This should bypass the need
+//! for credentials and so on. ```sh
 //! export PUBSUB_EMULATOR_HOST=localhost:8085
 //! export PUBSUB_PROJECT_ID=local-project
 //! ```
-//! > N.b. the rust client hardcodes the project id to `local-project` when it sees the
-//! > `PUBSUB_EMULATOR_HOST` env var in use, so if you see errors about resources not found etc, it
+//! > N.b. the rust client hardcodes the project id to `local-project` when it
+//! > sees the
+//! > `PUBSUB_EMULATOR_HOST` env var in use, so if you see errors about
+//! > resources not found etc, it
 //! > might be because of a project mismatch.
 //!
-//! To use the `gcloud` CLI with the emulator (useful for creating topics/subscriptions), you have
-//! to configure an override for the pubsub API:
-//!
+//! To use the `gcloud` CLI with the emulator (useful for creating
+//! topics/subscriptions), you have to configure an override for the pubsub API:
 //! ```sh
 //! gcloud config set api_endpoint_overrides/pubsub "http://${PUBSUB_EMULATOR_HOST}/"
 //! ```
@@ -33,11 +36,12 @@
 //! ```
 //! h/t <https://stackoverflow.com/a/73059126>
 //!
-//! Also note, and this is odd, `gcloud` will prompt you to login even though you're trying to
-//! connect to a local process.
+//! Also note, and this is odd, `gcloud` will prompt you to login even though
+//! you're trying to connect to a local process.
 //! Go ahead and follow the prompts to get your CLI working.
 //!
-//! I guess it still wants to talk to GCP for other interactions other than the pubsub API.
+//! I guess it still wants to talk to GCP for other interactions other than the
+//! pubsub API.
 //!
 //! ## Example `gcloud` usage:
 //! ```sh
@@ -47,15 +51,16 @@
 //!   --topic=tester \
 //!   --dead-letter-topic=dead-letters \
 //!   --max-delivery-attempts=5
-//! gcloud --project local-project pubsub topics publish tester --message='{"my message": 1234}'
-//! ```
-//!
+//! gcloud --project local-project pubsub topics publish tester --message='{"my
+//! message": 1234}' ```
 
-use google_cloud_googleapis::pubsub::v1::DeadLetterPolicy;
-use google_cloud_pubsub::client::{Client, ClientConfig};
-use google_cloud_pubsub::subscription::SubscriptionConfig;
 use std::time::{Duration, Instant};
 
+use google_cloud_googleapis::pubsub::v1::DeadLetterPolicy;
+use google_cloud_pubsub::{
+    client::{Client, ClientConfig},
+    subscription::SubscriptionConfig,
+};
 use omniqueue::{
     backends::{GcpPubSubBackend, GcpPubSubConfig},
     QueueBuilder,
@@ -63,12 +68,14 @@ use omniqueue::{
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_PUBSUB_EMULATOR_HOST: &str = "localhost:8085";
-/// Controls how many times a message can be nack'd before it lands on the dead letter topic.
+/// Controls how many times a message can be nack'd before it lands on the dead
+/// letter topic.
 const MAX_DELIVERY_ATTEMPTS: i32 = 5;
 
 async fn get_client() -> Client {
-    // The `Default` impl for `ClientConfig` looks for this env var. When set it branches for
-    // local-mode use using the addr in the env var and a hardcoded project id of `local-project`.
+    // The `Default` impl for `ClientConfig` looks for this env var. When set it
+    // branches for local-mode use using the addr in the env var and a hardcoded
+    // project id of `local-project`.
     if std::env::var("PUBSUB_EMULATOR_HOST").is_err() {
         std::env::set_var("PUBSUB_EMULATOR_HOST", DEFAULT_PUBSUB_EMULATOR_HOST);
     }
@@ -80,17 +87,18 @@ fn random_chars() -> impl Iterator<Item = char> {
     std::iter::repeat_with(fastrand::alphanumeric)
 }
 
-/// Returns a [`QueueBuilder`] configured to connect to the GCP emulator instance spawned by the
-/// file `testing-docker-compose.yaml` in the root of the repository.
+/// Returns a [`QueueBuilder`] configured to connect to the GCP emulator
+/// instance spawned by the file `testing-docker-compose.yaml` in the root of
+/// the repository.
 ///
-/// Additionally this will make a temporary topic/subscription on that instance for the duration of
-/// the test such as to ensure there is no stealing.
+/// Additionally this will make a temporary topic/subscription on that instance
+/// for the duration of the test such as to ensure there is no stealing.
 async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
     let client = get_client().await;
 
     let topic_name: String = "topic-".chars().chain(random_chars().take(8)).collect();
-    // Need to define a dead letter topic to avoid the "bad" test cases from pulling the nacked
-    // messages again and again.
+    // Need to define a dead letter topic to avoid the "bad" test cases from
+    // pulling the nacked messages again and again.
     let dead_letter_topic_name: String = "topic-".chars().chain(random_chars().take(8)).collect();
     let subscription_name: String = "subscription-"
         .chars()
@@ -171,7 +179,8 @@ async fn test_serde_send_recv() {
     d.ack().await.unwrap();
 }
 
-/// Consumer will return immediately if there are fewer than max messages to start with.
+/// Consumer will return immediately if there are fewer than max messages to
+/// start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
     let payload = ExType { a: 2 };
@@ -189,7 +198,8 @@ async fn test_send_recv_all_partial() {
     assert!(now.elapsed() <= deadline);
 }
 
-/// Consumer should yield items immediately if there's a full batch ready on the first poll.
+/// Consumer should yield items immediately if there's a full batch ready on the
+/// first poll.
 #[tokio::test]
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
@@ -216,11 +226,13 @@ async fn test_send_recv_all_full() {
         payload2
     );
     d2.ack().await.unwrap();
-    // N.b. it's still possible this could turn up false if the test runs too slow.
+    // N.b. it's still possible this could turn up false if the test runs too
+    // slow.
     assert!(now.elapsed() < deadline);
 }
 
-/// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
+/// Consumer will return the full batch immediately, but also return immediately
+/// if a partial batch is ready.
 #[tokio::test]
 async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };

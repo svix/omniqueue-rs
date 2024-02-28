@@ -126,8 +126,9 @@ impl InMemoryConsumer {
         }
 
         if max_messages > 1 {
-            // `try_recv` will break the loop if no ready items are already buffered in the channel.
-            // This should allow us to opportunistically fill up the buffer in the remaining time.
+            // `try_recv` will break the loop if no ready items are already
+            // buffered in the channel. This should allow us to
+            // opportunistically fill up the buffer in the remaining time.
             while let Ok(x) = self.rx.try_recv() {
                 out.push(self.wrap_payload(x));
                 if out.len() >= max_messages || start.elapsed() >= deadline {
@@ -176,8 +177,9 @@ impl Acker for InMemoryAcker {
 
 #[cfg(test)]
 mod tests {
-    use serde::{Deserialize, Serialize};
     use std::time::{Duration, Instant};
+
+    use serde::{Deserialize, Serialize};
 
     use super::InMemoryBackend;
     use crate::{QueueBuilder, QueueProducer};
@@ -220,7 +222,8 @@ mod tests {
         a: u8,
     }
 
-    /// Consumer will return immediately if there are fewer than max messages to start with.
+    /// Consumer will return immediately if there are fewer than max messages to
+    /// start with.
     #[tokio::test]
     async fn test_send_recv_all_partial() {
         let payload = ExType { a: 2 };
@@ -242,7 +245,8 @@ mod tests {
         assert!(now.elapsed() <= deadline);
     }
 
-    /// Consumer should yield items immediately if there's a full batch ready on the first poll.
+    /// Consumer should yield items immediately if there's a full batch ready on
+    /// the first poll.
     #[tokio::test]
     async fn test_send_recv_all_full() {
         let payload1 = ExType { a: 1 };
@@ -273,11 +277,13 @@ mod tests {
             payload2
         );
         d2.ack().await.unwrap();
-        // N.b. it's still possible this could turn up false if the test runs too slow.
+        // N.b. it's still possible this could turn up false if the test runs
+        // too slow.
         assert!(now.elapsed() < deadline);
     }
 
-    /// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
+    /// Consumer will return the full batch immediately, but also return
+    /// immediately if a partial batch is ready.
     #[tokio::test]
     async fn test_send_recv_all_full_then_partial() {
         let payload1 = ExType { a: 1 };

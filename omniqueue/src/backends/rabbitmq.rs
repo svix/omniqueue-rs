@@ -233,8 +233,9 @@ impl RabbitMqConsumer {
         }
 
         if max_messages > 1 {
-            // `now_or_never` will break the loop if no ready items are already buffered in the stream.
-            // This should allow us to opportunistically fill up the buffer in the remaining time.
+            // `now_or_never` will break the loop if no ready items are already
+            // buffered in the stream. This should allow us to opportunistically
+            // fill up the buffer in the remaining time.
             while let Some(Some(x)) = stream.next().now_or_never() {
                 out.push(x?);
                 if out.len() >= max_messages || start.elapsed() >= deadline {

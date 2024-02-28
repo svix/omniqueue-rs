@@ -1,12 +1,11 @@
 use async_trait::async_trait;
-
 use redis::{
     cluster::{ClusterClient, ClusterClientBuilder},
     ErrorKind, IntoConnectionInfo, RedisError,
 };
 
-/// ConnectionManager that implements `bb8::ManageConnection` and supports asynchronous clustered
-/// connections via `redis::cluster::ClusterClient`
+/// ConnectionManager that implements `bb8::ManageConnection` and supports
+/// asynchronous clustered connections via `redis::cluster::ClusterClient`
 #[derive(Clone)]
 pub struct RedisClusterConnectionManager {
     client: ClusterClient,

@@ -1,10 +1,11 @@
+use std::time::{Duration, Instant};
+
 use omniqueue::{
     backends::{RedisBackend, RedisConfig},
     QueueBuilder,
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
 
 const ROOT_URL: &str = "redis://localhost";
 
@@ -17,13 +18,15 @@ impl Drop for RedisStreamDrop {
     }
 }
 
-/// Returns a [`QueueBuilder`] configured to connect to the Redis instance spawned by the file
-/// `testing-docker-compose.yaml` in the root of the repository.
+/// Returns a [`QueueBuilder`] configured to connect to the Redis instance
+/// spawned by the file `testing-docker-compose.yaml` in the root of the
+/// repository.
 ///
-/// Additionally this will make a temporary stream on that instance for the duration of the test
-/// such as to ensure there is no stealing
+/// Additionally this will make a temporary stream on that instance for the
+/// duration of the test such as to ensure there is no stealing
 ///
-/// This will also return a [`RedisStreamDrop`] to clean up the stream after the test ends.
+/// This will also return a [`RedisStreamDrop`] to clean up the stream after the
+/// test ends.
 async fn make_test_queue() -> (QueueBuilder<RedisBackend>, RedisStreamDrop) {
     let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
@@ -98,7 +101,8 @@ async fn test_serde_send_recv() {
     d.ack().await.unwrap();
 }
 
-/// Consumer will return immediately if there are fewer than max messages to start with.
+/// Consumer will return immediately if there are fewer than max messages to
+/// start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
     let (builder, _drop) = make_test_queue().await;
@@ -118,7 +122,8 @@ async fn test_send_recv_all_partial() {
     assert!(now.elapsed() <= deadline);
 }
 
-/// Consumer should yield items immediately if there's a full batch ready on the first poll.
+/// Consumer should yield items immediately if there's a full batch ready on the
+/// first poll.
 #[tokio::test]
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
@@ -148,11 +153,13 @@ async fn test_send_recv_all_full() {
         payload2
     );
     d2.ack().await.unwrap();
-    // N.b. it's still possible this could turn up false if the test runs too slow.
+    // N.b. it's still possible this could turn up false if the test runs too
+    // slow.
     assert!(now.elapsed() < deadline);
 }
 
-/// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
+/// Consumer will return the full batch immediately, but also return immediately
+/// if a partial batch is ready.
 #[tokio::test]
 async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };
@@ -252,7 +259,8 @@ async fn test_pending() {
     let delivery1 = c.receive().await.unwrap();
     let delivery2 = c.receive().await.unwrap();
 
-    // All items claimed, but not yet ack'd. There shouldn't be anything available yet.
+    // All items claimed, but not yet ack'd. There shouldn't be anything available
+    // yet.
     assert!(c
         .receive_all(1, Duration::from_millis(1))
         .await

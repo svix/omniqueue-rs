@@ -1,32 +1,33 @@
 //! Redis stream-based queue implementation
 //!
 //! # Redis Streams in Brief
-//! Redis has a built-in queue called streams. With consumer groups and consumers, messages in this
-//! queue will automatically be put into a pending queue when read and deleted when acknowledged.
+//! Redis has a built-in queue called streams. With consumer groups and
+//! consumers, messages in this queue will automatically be put into a pending
+//! queue when read and deleted when acknowledged.
 //!
 //! # The Implementation
-//! This implementation uses this to allow worker instances to race for messages to dispatch which
-//! are then, ideally, acknowledged. If a message is processing for more than 45 seconds, it is
-//! reinserted at the back of the queue to be tried again.
+//! This implementation uses this to allow worker instances to race for messages
+//! to dispatch which are then, ideally, acknowledged. If a message is
+//! processing for more than 45 seconds, it is reinserted at the back of the
+//! queue to be tried again.
 //!
 //! This implementation uses the following data structures:
-//! - A "tasks to be processed" stream - which is what the consumer listens to for tasks.
-//!     AKA: Main
-//! - A ZSET for delayed tasks with the sort order being the time-to-be-delivered
-//!     AKA: Delayed
+//! - A "tasks to be processed" stream - which is what the consumer listens to
+//!   for tasks. AKA: Main
+//! - A ZSET for delayed tasks with the sort order being the
+//!   time-to-be-delivered AKA: Delayed
 //!
-//! The implementation spawns an additional worker that monitors both the zset delayed tasks and
-//! the tasks currently processing. It monitors the zset task set for tasks that should be
-//! processed now, and the currently processing queue for tasks that have timed out and should be
-//! put back on the main queue.
+//! The implementation spawns an additional worker that monitors both the zset
+//! delayed tasks and the tasks currently processing. It monitors the zset task
+//! set for tasks that should be processed now, and the currently processing
+//! queue for tasks that have timed out and should be put back on the main
+//! queue.
 
 // This lint warns on `let _: () = ...` which is used throughout this file for Redis commands which
 // have generic return types. This is cleaner than the turbofish operator in my opinion.
 #![allow(clippy::let_unit_value)]
 
-use std::marker::PhantomData;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
@@ -185,18 +186,19 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     }
 }
 
-// FIXME(onelson): there's a trait, [`SchedulerBackend`], but no obvious way to implement it in a
-//   way that makes good sense here.
-//   We need access to the pool, and various bits of config to spawn a task, but none of that is
-//   available where it matters right now.
-//   Doing my own thing for now - standalone function that takes what it needs.
+// FIXME(onelson): there's a trait, [`SchedulerBackend`], but no obvious way to
+// implement it in a way that makes good sense here.
+// We need access to the pool, and various bits of config to spawn a task, but
+// none of that is available where it matters right now.
+// Doing my own thing for now - standalone function that takes what it needs.
 async fn start_background_tasks<R: RedisConnection>(
     redis: bb8::Pool<R>,
     cfg: &RedisConfig,
 ) -> JoinSet<Result<()>> {
     let mut join_set = JoinSet::new();
 
-    // FIXME(onelson): does it even make sense to treat delay support as optional here?
+    // FIXME(onelson): does it even make sense to treat delay support as optional
+    // here?
     if cfg.delayed_queue_key.is_empty() {
         tracing::warn!("no delayed_queue_key specified - delayed task scheduler disabled");
     } else {
@@ -266,7 +268,8 @@ const GENERATE_STREAM_ID: &str = "*";
 /// Special ID for XREADGROUP commands which reads any new messages
 const LISTEN_STREAM_ID: &str = ">";
 
-/// Moves "due" messages from a sorted set, where delayed messages are shelved, back onto the main queue.
+/// Moves "due" messages from a sorted set, where delayed messages are shelved,
+/// back onto the main queue.
 async fn background_task_delayed<R: RedisConnection>(
     pool: bb8::Pool<R>,
     main_queue_name: &str,
@@ -278,9 +281,10 @@ async fn background_task_delayed<R: RedisConnection>(
 
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
-    // There is a lock on the delayed queue processing to avoid race conditions. So first try to
-    // acquire the lock should it not already exist. The lock expires after five seconds in case a
-    // worker crashes while holding the lock.
+    // There is a lock on the delayed queue processing to avoid race conditions.
+    // So first try to acquire the lock should it not already exist. The lock
+    // expires after five seconds in case a worker crashes while holding the
+    // lock.
     let mut cmd = redis::cmd("SET");
     cmd.arg(delayed_lock)
         .arg(true)
@@ -385,11 +389,13 @@ impl FromRedisValue for StreamAutoclaimReply {
     }
 }
 
-/// The maximum number of pending messages to reinsert into the queue after becoming stale per loop
+/// The maximum number of pending messages to reinsert into the queue after
+/// becoming stale per loop
 // FIXME(onelson): expose in config?
 const PENDING_BATCH_SIZE: i16 = 1000;
 
-/// Scoops up messages that have been claimed but not handled by a deadline, then re-queues them.
+/// Scoops up messages that have been claimed but not handled by a deadline,
+/// then re-queues them.
 async fn background_task_pending<R: RedisConnection>(
     pool: bb8::Pool<R>,
     main_queue_name: &str,
@@ -399,8 +405,8 @@ async fn background_task_pending<R: RedisConnection>(
 ) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
-    // Every iteration checks whether the processing queue has items that should be picked back up,
-    // claiming them in the process
+    // Every iteration checks whether the processing queue has items that should
+    // be picked back up, claiming them in the process
     let mut cmd = redis::cmd("XAUTOCLAIM");
     cmd.arg(main_queue_name)
         .arg(consumer_group)
