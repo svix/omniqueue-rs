@@ -16,8 +16,6 @@ types for which you have provided an encoding and/or decoding function.
 It is designed to be flexible and to be able to adapt to fit your existing queue configurations, but
 with a set of defaults that makes it simple to start sending and receiving quickly.
 
-Omniqueue is still early in development.
-
 ## How to use Omniqueue
 
 While the exact configuration will depend on the backend used, usage is roughly as follows.
