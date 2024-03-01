@@ -1,5 +1,8 @@
 # 0.2.0
 
+This release is a big one, and we are considering omniqueue out of early development now.
+You can expect the API to change much less in the coming releases compared to this one.
+
 ## Breaking changes
 
 - **redis: Some implementation changes mean that this backend is runtime-incompatible with the same backend in omniqueue 0.1**
