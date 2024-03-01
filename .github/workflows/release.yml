@@ -15,19 +15,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
-          profile: minimal
-          components: clippy, rustfmt
+          toolchain: ${{ matrix.rust }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2,
+        # only restore cache for faster publishing, don't save back results
+        save-if: false
 
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        uses: actions-rs/cargo@v1
-        with:
-          command: publish
-          args: --manifest-path omniqueue/Cargo.toml
+        run: cargo publish --package omniqueue
