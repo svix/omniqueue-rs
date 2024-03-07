@@ -1,25 +1,30 @@
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use google_cloud_googleapis::pubsub::v1::PubsubMessage;
+use google_cloud_pubsub::{
+    client::{google_cloud_auth::credentials::CredentialsFile, Client, ClientConfig},
+    subscriber::ReceivedMessage,
+    subscription::Subscription,
+};
+use serde::Serialize;
+
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
     QueueError, Result,
 };
-use async_trait::async_trait;
-use futures_util::StreamExt;
-use google_cloud_googleapis::pubsub::v1::PubsubMessage;
-use google_cloud_pubsub::client::{
-    google_cloud_auth::credentials::CredentialsFile, Client, ClientConfig,
-};
-use google_cloud_pubsub::subscriber::ReceivedMessage;
-use google_cloud_pubsub::subscription::Subscription;
-use serde::Serialize;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
 
 pub struct GcpPubSubBackend;
 
 impl GcpPubSubBackend {
-    /// Creates a new Google Cloud Pub/Sub queue builder with the given configuration.
+    /// Creates a new Google Cloud Pub/Sub queue builder with the given
+    /// configuration.
     pub fn builder(config: GcpPubSubConfig) -> QueueBuilder<Self, Static> {
         QueueBuilder::new(config)
     }
@@ -46,9 +51,10 @@ async fn configure_client_from_file<P: AsRef<Path>>(cred_file_path: P) -> Result
 }
 
 /// Making a `ClientConfig` via env vars is possible in two ways:
-/// - setting `GOOGLE_APPLICATION_CREDENTIALS` to the file path to have it loaded automatically
-/// - setting `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the file contents (avoiding the need for a
-///   file on disk).
+/// - setting `GOOGLE_APPLICATION_CREDENTIALS` to the file path to have it
+///   loaded automatically
+/// - setting `GOOGLE_APPLICATION_CREDENTIALS_JSON` to the file contents
+///   (avoiding the need for a file on disk).
 async fn configure_client_from_env() -> Result<ClientConfig> {
     ClientConfig::default()
         .with_auth()
@@ -106,8 +112,8 @@ impl GcpPubSubProducer {
     async fn new(client: Client, topic_id: String) -> Result<Self> {
         let topic = client.topic(&topic_id);
         // Only warn if the topic doesn't exist at this point.
-        // If it gets created after the fact, we should be able to still use it when available,
-        // otherwise if it's still missing at that time, error.
+        // If it gets created after the fact, we should be able to still use it
+        // when available, otherwise if it's still missing at that time, error.
         if !topic.exists(None).await.map_err(QueueError::generic)? {
             tracing::warn!("topic {} does not exist", &topic_id);
         }
@@ -128,9 +134,10 @@ impl GcpPubSubProducer {
         // Might be more expensive to recreate each time, but overall more reliable.
         let topic = self.client.topic(&self.topic_id);
 
-        // Publishing to a non-existent topic will cause the publisher to wait (forever?)
-        // Giving this error will allow dependents to handle the error case immediately when this
-        // happens, instead of holding the connection open indefinitely.
+        // Publishing to a non-existent topic will cause the publisher to wait
+        // (forever?) Giving this error will allow dependents to handle the
+        // error case immediately when this happens, instead of holding the
+        // connection open indefinitely.
         if !topic.exists(None).await.map_err(QueueError::generic)? {
             return Err(QueueError::Generic(
                 format!("topic {} does not exist", &self.topic_id).into(),
@@ -202,9 +209,10 @@ impl GcpPubSubConsumer {
 
     fn wrap_recv_msg(&self, mut recv_msg: ReceivedMessage) -> Delivery {
         // FIXME: would be nice to avoid having to move the data out here.
-        //   While it's possible to ack via a subscription and an ack_id, nack is only
-        //   possible via a `ReceiveMessage`. This means we either need to hold 2 copies of
-        //   the payload, or move the bytes out so they can be returned _outside of the Acker_.
+        // While it's possible to ack via a subscription and an ack_id, nack
+        // is only possible via a `ReceiveMessage`. This means we either need
+        // to hold 2 copies of the payload, or move the bytes out so they can be
+        // returned _outside of the Acker_.
         let payload = recv_msg.message.data.drain(..).collect();
 
         Delivery {

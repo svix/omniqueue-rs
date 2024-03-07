@@ -1,8 +1,10 @@
-use lapin::options::ExchangeDeclareOptions;
-use lapin::types::AMQPValue;
+use std::time::{Duration, Instant};
+
 use lapin::{
-    options::{BasicConsumeOptions, BasicPublishOptions, QueueDeclareOptions},
-    types::FieldTable,
+    options::{
+        BasicConsumeOptions, BasicPublishOptions, ExchangeDeclareOptions, QueueDeclareOptions,
+    },
+    types::{AMQPValue, FieldTable},
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
 };
 use omniqueue::{
@@ -10,15 +12,15 @@ use omniqueue::{
     QueueBuilder,
 };
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
 
 const MQ_URI: &str = "amqp://guest:guest@localhost:5672/%2f";
 
-/// Returns a [`QueueBuilder`] configured to connect to the RabbitMQ instance spawned by the file
-/// `testing-docker-compose.yaml` in the root of the repository.
+/// Returns a [`QueueBuilder`] configured to connect to the RabbitMQ instance
+/// spawned by the file `testing-docker-compose.yaml` in the root of the
+/// repository.
 ///
-/// Additionally this will make a temporary queue on that instance for the duration of the test such
-/// as to ensure there is no stealing.w
+/// Additionally this will make a temporary queue on that instance for the
+/// duration of the test such as to ensure there is no stealing.w
 async fn make_test_queue(
     prefetch_count: Option<u16>,
     reinsert_on_nack: bool,
@@ -144,7 +146,8 @@ async fn test_serde_send_recv() {
     d.ack().await.unwrap();
 }
 
-/// Consumer will return immediately if there are fewer than max messages to start with.
+/// Consumer will return immediately if there are fewer than max messages to
+/// start with.
 #[tokio::test]
 async fn test_send_recv_all_partial() {
     let payload = ExType { a: 2 };
@@ -166,7 +169,8 @@ async fn test_send_recv_all_partial() {
     assert!(now.elapsed() <= deadline);
 }
 
-/// Consumer should yield items immediately if there's a full batch ready on the first poll.
+/// Consumer should yield items immediately if there's a full batch ready on the
+/// first poll.
 #[tokio::test]
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
@@ -180,8 +184,9 @@ async fn test_send_recv_all_full() {
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
 
-    // XXX: rabbit's receive_all impl relies on stream items to be in a ready state in order for
-    // them to be batched together. Sleeping to help them settle before we poll.
+    // XXX: rabbit's receive_all impl relies on stream items to be in a ready
+    // state in order for them to be batched together. Sleeping to help them
+    // settle before we poll.
     tokio::time::sleep(Duration::from_millis(100)).await;
     let deadline = Duration::from_secs(1);
 
@@ -201,11 +206,13 @@ async fn test_send_recv_all_full() {
         payload2
     );
     d2.ack().await.unwrap();
-    // N.b. it's still possible this could turn up false if the test runs too slow.
+    // N.b. it's still possible this could turn up false if the test runs too
+    // slow.
     assert!(now.elapsed() < deadline);
 }
 
-/// Consumer will return the full batch immediately, but also return immediately if a partial batch is ready.
+/// Consumer will return the full batch immediately, but also return immediately
+/// if a partial batch is ready.
 #[tokio::test]
 async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };
@@ -221,8 +228,9 @@ async fn test_send_recv_all_full_then_partial() {
     p.send_serde_json(&payload2).await.unwrap();
     p.send_serde_json(&payload3).await.unwrap();
 
-    // XXX: rabbit's receive_all impl relies on stream items to be in a ready state in order for
-    // them to be batched together. Sleeping to help them settle before we poll.
+    // XXX: rabbit's receive_all impl relies on stream items to be in a ready
+    // state in order for them to be batched together. Sleeping to help them
+    // settle before we poll.
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let deadline = Duration::from_secs(1);

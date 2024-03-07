@@ -1,16 +1,16 @@
 //! # Omniqueue
 //!
-//! Omniqueue provides a high-level interface for sending and receiving the following over a range
-//! of queue backends:
+//! Omniqueue provides a high-level interface for sending and receiving the
+//! following over a range of queue backends:
 //!
 //!   * Raw byte arrays in the way most compatible with the queue backend
-//!   * JSON encoded byte arrays for types that implement [`serde::Deserialize`] and
-//!     [`serde::Serialize`]
+//!   * JSON encoded byte arrays for types that implement [`serde::Deserialize`]
+//!     and [`serde::Serialize`]
 //!
 //! ## Cargo Features
 //!
-//! Each backend is enabled with its associated cargo feature. All backends are enabled by default.
-//! As of present it supports:
+//! Each backend is enabled with its associated cargo feature. All backends are
+//! enabled by default. As of present it supports:
 //!
 //! * In-memory queue
 //! * Google Cloud Pub/Sub
@@ -20,8 +20,8 @@
 //!
 //! ## How to Use Omniqueue
 //!
-//! Each queue backend has a unique configuration type. One of these configurations is taken
-//! when constructing the [`QueueBuilder`].
+//! Each queue backend has a unique configuration type. One of these
+//! configurations is taken when constructing the [`QueueBuilder`].
 //!
 //! To create a simple producer and/or consumer:
 //!
@@ -64,10 +64,11 @@
 //!
 //! ## `DynProducer`s and `DynConsumer`s
 //!
-//! Dynamic-dispatch can be used easily for when you're not sure which backend to use at
-//! compile-time.
+//! Dynamic-dispatch can be used easily for when you're not sure which backend
+//! to use at compile-time.
 //!
-//! Making a `DynProducer` or `DynConsumer` is as simple as adding one line to the builder:
+//! Making a `DynProducer` or `DynConsumer` is as simple as adding one line to
+//! the builder:
 //!
 //! ```no_run
 //! # async {

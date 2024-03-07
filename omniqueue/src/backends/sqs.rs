@@ -1,9 +1,10 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use aws_sdk_sqs::types::Message;
 use aws_sdk_sqs::{
-    operation::delete_message::DeleteMessageError, types::error::ReceiptHandleIsInvalid, Client,
+    operation::delete_message::DeleteMessageError,
+    types::{error::ReceiptHandleIsInvalid, Message},
+    Client,
 };
 use serde::Serialize;
 

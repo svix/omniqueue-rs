@@ -10,6 +10,19 @@ on:
   pull_request:
 
 jobs:
+  check-fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: rustfmt
+        run: cargo fmt -- --check
+
   test-versions:
     name: Library Lint
     runs-on: ubuntu-latest
@@ -22,7 +35,7 @@ jobs:
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
-        components: clippy, rustfmt
+        components: clippy
 
     - uses: taiki-e/install-action@cargo-hack
 
@@ -30,9 +43,6 @@ jobs:
 
     - name: Clippy
       run: cargo hack --each-feature clippy --all-targets -- -D warnings
-
-    - name: rustfmt
-      run: cargo fmt -- --check
 
     - name: Start test dependencies
       run: docker-compose -f "./testing-docker-compose.yml" up -d
