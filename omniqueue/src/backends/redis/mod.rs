@@ -219,7 +219,7 @@ async fn start_background_tasks<R: RedisConnection>(
             async move {
                 loop {
                     if let Err(err) = background_task_delayed(
-                        pool.clone(),
+                        &pool,
                         &queue_key,
                         &delayed_queue_key,
                         &delayed_lock_key,
@@ -246,7 +246,7 @@ async fn start_background_tasks<R: RedisConnection>(
         async move {
             loop {
                 if let Err(err) = background_task_pending(
-                    pool.clone(),
+                    &pool,
                     &queue_key,
                     &consumer_group,
                     &consumer_name,
@@ -272,7 +272,7 @@ const LISTEN_STREAM_ID: &str = ">";
 /// Moves "due" messages from a sorted set, where delayed messages are shelved,
 /// back onto the main queue.
 async fn background_task_delayed<R: RedisConnection>(
-    pool: bb8::Pool<R>,
+    pool: &bb8::Pool<R>,
     main_queue_name: &str,
     delayed_queue_name: &str,
     delayed_lock: &str,
@@ -400,7 +400,7 @@ const PENDING_BATCH_SIZE: i16 = 1000;
 /// Scoops up messages that have been claimed but not handled by a deadline,
 /// then re-queues them.
 async fn background_task_pending<R: RedisConnection>(
-    pool: bb8::Pool<R>,
+    pool: &bb8::Pool<R>,
     main_queue_name: &str,
     consumer_group: &str,
     consumer_name: &str,
