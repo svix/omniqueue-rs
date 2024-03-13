@@ -39,6 +39,7 @@ use redis::{
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use tokio::task::JoinSet;
+use tracing::trace;
 
 use crate::{
     builder::{QueueBuilder, Static},
@@ -320,6 +321,8 @@ async fn background_task_delayed<R: RedisConnection>(
         .map_err(QueueError::generic)?;
 
         if !keys.is_empty() {
+            trace!("Moving {} messages from delayed to main queue", keys.len());
+
             // For each task, XADD them to the MAIN queue
             let mut pipe = redis::pipe();
             for key in &keys {
@@ -422,6 +425,8 @@ async fn background_task_pending<R: RedisConnection>(
         .map_err(QueueError::generic)?;
 
     if !ids.is_empty() {
+        trace!("Moving {} unhandled messages back to the queue", ids.len());
+
         let mut pipe = redis::pipe();
 
         // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
