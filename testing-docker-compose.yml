@@ -87,3 +87,8 @@ services:
       "--project", "local-project",
       "--host-port", "0.0.0.0:8085"
     ]
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+     - "10001:10001"

@@ -13,6 +13,8 @@ edition = "2021"
 async-trait = "0.1"
 aws-config = { version = "1.1.5", features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.13.0", optional = true }
+azure_storage = { version = "0.19.0", optional = true }
+azure_storage_queues = { version = "0.19.0", optional = true }
 bb8 = { version = "0.8", optional = true }
 bb8-redis = { version = "0.14.0", optional = true }
 futures-util = { version = "0.3.28", default-features = false, features = ["async-await", "std"], optional = true }
@@ -46,3 +48,4 @@ rabbitmq-with-message-ids = ["rabbitmq", "dep:time", "dep:svix-ksuid"]
 redis = ["dep:bb8", "dep:bb8-redis", "dep:redis", "dep:svix-ksuid"]
 redis_cluster = ["redis", "redis/cluster-async"]
 sqs = ["dep:aws-config", "dep:aws-sdk-sqs"]
+azure_queue_storage = ["dep:azure_storage", "dep:azure_storage_queues"]
