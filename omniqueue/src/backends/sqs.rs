@@ -27,6 +27,18 @@ impl SqsBackend {
     pub fn builder(config: SqsConfig) -> QueueBuilder<Self, Static> {
         QueueBuilder::new(config)
     }
+
+    pub async fn new_pair(cfg: SqsConfig) -> Result<(SqsProducer, SqsConsumer)> {
+        <Self as QueueBackend>::new_pair(cfg).await
+    }
+
+    pub async fn producing_half(cfg: SqsConfig) -> Result<SqsProducer> {
+        <Self as QueueBackend>::producing_half(cfg).await
+    }
+
+    pub async fn consuming_half(cfg: SqsConfig) -> Result<SqsConsumer> {
+        <Self as QueueBackend>::consuming_half(cfg).await
+    }
 }
 
 impl QueueBackend for SqsBackend {
