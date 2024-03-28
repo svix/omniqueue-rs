@@ -52,7 +52,7 @@
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
 //! #
-//! # let (p, mut c) = SqsBackend::builder(todo!()).build_pair().await?;
+//! # let (p, mut c) = SqsBackend::builder("<dsn>").build_pair().await?;
 //! p.send_serde_json(&ExampleType::default()).await?;
 //!
 //! let delivery = c.receive().await?;
