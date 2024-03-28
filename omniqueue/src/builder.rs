@@ -17,7 +17,7 @@ pub struct Dynamic;
 /// [`RedisQueueBackend::builder`][crate::backends::RedisBackend::builder] and
 /// so on.
 pub struct QueueBuilder<Q: QueueBackend, S = Static> {
-    config: Q::Config,
+    pub(crate) config: Q::Config,
 
     _pd: PhantomData<S>,
 }
