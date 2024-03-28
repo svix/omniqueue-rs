@@ -16,7 +16,10 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
+    /// The queue's [DSN](https://aws.amazon.com/route53/what-is-dns/).
     pub queue_dsn: String,
+
+    /// Whether to override the AWS endpoint URL with the queue DSN.
     pub override_endpoint: bool,
 }
 
