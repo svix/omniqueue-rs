@@ -209,3 +209,15 @@ async fn test_scheduled_recv_all() {
     );
     d.ack().await.unwrap();
 }
+
+#[tokio::test]
+async fn test_empty_recv_all() {
+    let (_producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let deadline = Duration::from_secs(1);
+
+    let now = Instant::now();
+    let d = consumer.receive_all(1, deadline).await.unwrap();
+    assert!(now.elapsed() > deadline);
+    assert!(d.is_empty());
+}
