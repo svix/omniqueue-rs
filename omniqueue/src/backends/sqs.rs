@@ -16,16 +16,86 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
+    /// The queue's [DSN](https://aws.amazon.com/route53/what-is-dns/).
     pub queue_dsn: String,
+
+    /// Whether to override the AWS endpoint URL with the queue DSN.
     pub override_endpoint: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct SqsConfigFull {
+    queue_dsn: String,
+    override_endpoint: bool,
+    aws_config: Option<aws_config::SdkConfig>,
+}
+
+impl SqsConfigFull {
+    async fn take_aws_config(&mut self) -> aws_config::SdkConfig {
+        if let Some(cfg) = self.aws_config.take() {
+            cfg
+        } else if self.override_endpoint {
+            aws_config::from_env()
+                .endpoint_url(&self.queue_dsn)
+                .load()
+                .await
+        } else {
+            aws_config::load_from_env().await
+        }
+    }
+}
+
+#[allow(deprecated)]
+impl From<SqsConfig> for SqsConfigFull {
+    fn from(cfg: SqsConfig) -> Self {
+        let SqsConfig {
+            queue_dsn,
+            override_endpoint,
+        } = cfg;
+        Self {
+            queue_dsn,
+            override_endpoint,
+            aws_config: None,
+        }
+    }
+}
+
+impl From<&str> for SqsConfigFull {
+    fn from(dsn: &str) -> Self {
+        Self::from(dsn.to_owned())
+    }
+}
+
+impl From<String> for SqsConfigFull {
+    fn from(dsn: String) -> Self {
+        Self {
+            queue_dsn: dsn,
+            override_endpoint: false,
+            aws_config: None,
+        }
+    }
 }
 
 pub struct SqsBackend;
 
 impl SqsBackend {
     /// Creates a new Amazon SQS queue builder with the given configuration.
-    pub fn builder(config: SqsConfig) -> QueueBuilder<Self, Static> {
-        QueueBuilder::new(config)
+    ///
+    /// You can pass either a queue DSN, or a [`SqsConfig`] instance here.
+    pub fn builder(cfg: impl Into<SqsConfigFull>) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(cfg.into())
+    }
+
+    pub async fn new_pair(cfg: impl Into<SqsConfigFull>) -> Result<(SqsProducer, SqsConsumer)> {
+        <Self as QueueBackend>::new_pair(cfg.into()).await
+    }
+
+    pub async fn producing_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsProducer> {
+        <Self as QueueBackend>::producing_half(cfg.into()).await
+    }
+
+    pub async fn consuming_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsConsumer> {
+        <Self as QueueBackend>::consuming_half(cfg.into()).await
     }
 }
 
@@ -36,18 +106,10 @@ impl QueueBackend for SqsBackend {
     type Producer = SqsProducer;
     type Consumer = SqsConsumer;
 
-    type Config = SqsConfig;
+    type Config = SqsConfigFull;
 
-    async fn new_pair(cfg: SqsConfig) -> Result<(SqsProducer, SqsConsumer)> {
-        let aws_cfg = if cfg.override_endpoint {
-            aws_config::from_env()
-                .endpoint_url(&cfg.queue_dsn)
-                .load()
-                .await
-        } else {
-            aws_config::load_from_env().await
-        };
-
+    async fn new_pair(mut cfg: SqsConfigFull) -> Result<(SqsProducer, SqsConsumer)> {
+        let aws_cfg = cfg.take_aws_config().await;
         let client = Client::new(&aws_cfg);
 
         let producer = SqsProducer {
@@ -63,16 +125,8 @@ impl QueueBackend for SqsBackend {
         Ok((producer, consumer))
     }
 
-    async fn producing_half(cfg: SqsConfig) -> Result<SqsProducer> {
-        let aws_cfg = if cfg.override_endpoint {
-            aws_config::from_env()
-                .endpoint_url(&cfg.queue_dsn)
-                .load()
-                .await
-        } else {
-            aws_config::load_from_env().await
-        };
-
+    async fn producing_half(mut cfg: SqsConfigFull) -> Result<SqsProducer> {
+        let aws_cfg = cfg.take_aws_config().await;
         let client = Client::new(&aws_cfg);
 
         let producer = SqsProducer {
@@ -83,16 +137,8 @@ impl QueueBackend for SqsBackend {
         Ok(producer)
     }
 
-    async fn consuming_half(cfg: SqsConfig) -> Result<SqsConsumer> {
-        let aws_cfg = if cfg.override_endpoint {
-            aws_config::from_env()
-                .endpoint_url(&cfg.queue_dsn)
-                .load()
-                .await
-        } else {
-            aws_config::load_from_env().await
-        };
-
+    async fn consuming_half(mut cfg: SqsConfigFull) -> Result<SqsConsumer> {
+        let aws_cfg = cfg.take_aws_config().await;
         let client = Client::new(&aws_cfg);
 
         let consumer = SqsConsumer {
@@ -101,6 +147,23 @@ impl QueueBackend for SqsBackend {
         };
 
         Ok(consumer)
+    }
+}
+
+impl QueueBuilder<SqsBackend> {
+    /// Set the AWS configuration to use.
+    ///
+    /// If you _don't_ call this method, the AWS configuration will be loaded
+    /// from the process environment, via [`aws_config::load_from_env`].
+    pub fn aws_config(mut self, value: aws_config::SdkConfig) -> Self {
+        self.config.aws_config = Some(value);
+        self
+    }
+
+    /// Configure whether to override the AWS endpoint URL with the queue DSN.
+    pub fn override_endpoint(mut self, value: bool) -> Self {
+        self.config.override_endpoint = value;
+        self
     }
 }
 
