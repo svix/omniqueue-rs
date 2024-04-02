@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::{queue::Acker, Delivery, QueueBackend, QueueError, Result};
 
-fn get_client(cfg: &AqsQueueConfig) -> QueueClient {
+fn get_client(cfg: &AqsConfig) -> QueueClient {
     let storage_credentials =
         StorageCredentials::access_key(cfg.storage_account.clone(), cfg.access_key.clone());
 
@@ -24,10 +24,11 @@ fn get_client(cfg: &AqsQueueConfig) -> QueueClient {
     builder.build().queue_client(cfg.queue_name.clone())
 }
 
-pub struct AqsQueueBackend;
+#[non_exhaustive]
+pub struct AqsBackend;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AqsQueueConfig {
+pub struct AqsConfig {
     pub queue_name: String,
     pub empty_receive_delay: std::time::Duration,
     pub message_ttl: std::time::Duration,
@@ -36,46 +37,46 @@ pub struct AqsQueueConfig {
     pub cloud_uri: Option<String>,
 }
 
-impl QueueBackend for AqsQueueBackend {
-    type Config = AqsQueueConfig;
+impl QueueBackend for AqsBackend {
+    type Config = AqsConfig;
 
     type PayloadIn = String;
     type PayloadOut = String;
 
-    type Producer = AqsQueueProducer;
-    type Consumer = AqsQueueConsumer;
+    type Producer = AqsProducer;
+    type Consumer = AqsConsumer;
 
-    async fn new_pair(config: Self::Config) -> Result<(AqsQueueProducer, AqsQueueConsumer)> {
+    async fn new_pair(config: Self::Config) -> Result<(AqsProducer, AqsConsumer)> {
         let client = get_client(&config);
         Ok((
-            AqsQueueProducer {
+            AqsProducer {
                 client: client.clone(),
                 config: config.clone(),
             },
-            AqsQueueConsumer {
+            AqsConsumer {
                 client: client.clone(),
                 config: config.clone(),
             },
         ))
     }
 
-    async fn producing_half(config: Self::Config) -> Result<AqsQueueProducer> {
+    async fn producing_half(config: Self::Config) -> Result<AqsProducer> {
         let client = get_client(&config);
-        Ok(AqsQueueProducer { client, config })
+        Ok(AqsProducer { client, config })
     }
 
-    async fn consuming_half(config: Self::Config) -> Result<AqsQueueConsumer> {
+    async fn consuming_half(config: Self::Config) -> Result<AqsConsumer> {
         let client = get_client(&config);
-        Ok(AqsQueueConsumer { client, config })
+        Ok(AqsConsumer { client, config })
     }
 }
 
-pub struct AqsQueueProducer {
+pub struct AqsProducer {
     client: QueueClient,
-    config: AqsQueueConfig,
+    config: AqsConfig,
 }
 
-impl AqsQueueProducer {
+impl AqsProducer {
     pub async fn send_raw(&self, payload: &str) -> Result<()> {
         self.send_raw_scheduled(payload, Duration::ZERO).await
     }
@@ -104,12 +105,12 @@ impl AqsQueueProducer {
     }
 }
 
-impl_queue_producer!(AqsQueueProducer, String);
-impl_scheduled_queue_producer!(AqsQueueProducer, String);
+impl_queue_producer!(AqsProducer, String);
+impl_scheduled_queue_producer!(AqsProducer, String);
 
-pub struct AqsQueueConsumer {
+pub struct AqsConsumer {
     client: QueueClient,
-    config: AqsQueueConfig,
+    config: AqsConfig,
 }
 
 struct AqsAcker {
@@ -138,7 +139,7 @@ impl Acker for AqsAcker {
     }
 }
 
-impl AqsQueueConsumer {
+impl AqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
         Delivery {
             acker: Box::new(AqsAcker {
@@ -193,4 +194,4 @@ impl AqsQueueConsumer {
     }
 }
 
-impl_queue_consumer!(AqsQueueConsumer, String);
+impl_queue_consumer!(AqsConsumer, String);

@@ -6,17 +6,17 @@ use std::{
 use azure_storage::StorageCredentials;
 use azure_storage_queues::QueueServiceClientBuilder;
 use omniqueue::{
-    backends::{AqsQueueBackend, AqsQueueConfig, AqsQueueConsumer, AqsQueueProducer},
+    backends::{AqsBackend, AqsConfig, AqsConsumer, AqsProducer},
     QueueBackend, QueueError,
 };
 use serde::{Deserialize, Serialize};
 
-async fn create_queue_get_a_pair() -> (AqsQueueProducer, AqsQueueConsumer) {
+async fn create_queue_get_a_pair() -> (AqsProducer, AqsConsumer) {
     let queue_name: String = std::iter::repeat_with(fastrand::lowercase)
         .take(8)
         .collect();
 
-    let cfg = AqsQueueConfig {
+    let cfg = AqsConfig {
         queue_name,
         empty_receive_delay: Duration::from_millis(1),
         message_ttl: Duration::from_secs(90),
@@ -41,7 +41,7 @@ async fn create_queue_get_a_pair() -> (AqsQueueProducer, AqsQueueConsumer) {
 
     cli.create().into_future().await.unwrap();
 
-    AqsQueueBackend::new_pair(cfg).await.unwrap()
+    AqsBackend::new_pair(cfg).await.unwrap()
 }
 
 #[derive(Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]

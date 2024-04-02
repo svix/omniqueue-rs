@@ -12,9 +12,7 @@ pub mod redis;
 pub mod sqs;
 
 #[cfg(feature = "azure_queue_storage")]
-pub use azure_queue_storage::{
-    AqsQueueBackend, AqsQueueConfig, AqsQueueConsumer, AqsQueueProducer,
-};
+pub use azure_queue_storage::{AqsBackend, AqsConfig, AqsConsumer, AqsProducer};
 #[cfg(feature = "gcp_pubsub")]
 pub use gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig, GcpPubSubConsumer, GcpPubSubProducer};
 #[cfg(feature = "in_memory")]
