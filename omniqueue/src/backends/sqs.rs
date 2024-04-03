@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    fmt::{self, Write},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use aws_sdk_sqs::{
@@ -190,7 +193,7 @@ impl Acker for SqsAcker {
                 .receipt_handle(receipt_handle)
                 .send()
                 .await
-                .map_err(QueueError::generic)?;
+                .map_err(aws_to_queue_error)?;
 
             self.has_been_acked_or_nacked = true;
 
@@ -226,7 +229,7 @@ impl SqsProducer {
             .message_body(payload)
             .send()
             .await
-            .map_err(QueueError::generic)?;
+            .map_err(aws_to_queue_error)?;
 
         Ok(())
     }
@@ -244,7 +247,7 @@ impl SqsProducer {
             .delay_seconds(delay.as_secs().try_into().map_err(QueueError::generic)?)
             .send()
             .await
-            .map_err(QueueError::generic)?;
+            .map_err(aws_to_queue_error)?;
 
         Ok(())
     }
@@ -288,7 +291,7 @@ impl SqsConsumer {
             .queue_url(&self.queue_dsn)
             .send()
             .await
-            .map_err(QueueError::generic)?;
+            .map_err(aws_to_queue_error)?;
 
         out.messages()
             .iter()
@@ -312,7 +315,7 @@ impl SqsConsumer {
             .queue_url(&self.queue_dsn)
             .send()
             .await
-            .map_err(QueueError::generic)?;
+            .map_err(aws_to_queue_error)?;
 
         out.messages()
             .iter()
@@ -322,3 +325,22 @@ impl SqsConsumer {
 }
 
 impl_queue_consumer!(SqsConsumer, String);
+
+fn aws_to_queue_error<E>(err: aws_sdk_sqs::error::SdkError<E>) -> QueueError
+where
+    E: std::error::Error + 'static,
+{
+    let mut message = String::new();
+    write_err(&mut message, &err).expect("Write to string never fails");
+    QueueError::Generic(message.into())
+}
+
+fn write_err(s: &mut String, err: &dyn std::error::Error) -> fmt::Result {
+    write!(s, "{err}")?;
+    if let Some(source) = err.source() {
+        write!(s, ": ")?;
+        write_err(s, source)?;
+    }
+
+    Ok(())
+}
