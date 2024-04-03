@@ -121,7 +121,9 @@ pub enum QueueError {
 
     #[error("{0}")]
     Generic(Box<dyn std::error::Error + Send + Sync>),
+
     #[error("{0}")]
+    #[deprecated = "This variant is never created inside omniqueue"]
     Unsupported(&'static str),
 }
 
