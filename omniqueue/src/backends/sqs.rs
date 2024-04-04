@@ -223,15 +223,7 @@ pub struct SqsProducer {
 
 impl SqsProducer {
     pub async fn send_raw(&self, payload: &str) -> Result<()> {
-        self.client
-            .send_message()
-            .queue_url(&self.queue_dsn)
-            .message_body(payload)
-            .send()
-            .await
-            .map_err(aws_to_queue_error)?;
-
-        Ok(())
+        self.send_raw_scheduled(payload, Duration::ZERO).await
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
