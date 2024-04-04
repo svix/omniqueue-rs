@@ -17,6 +17,9 @@ use crate::{
     QueueError, Result,
 };
 
+/// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
+const MAX_PAYLOAD_SIZE: usize = 262_144;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
     /// The queue's [DSN](https://aws.amazon.com/route53/what-is-dns/).
@@ -223,15 +226,7 @@ pub struct SqsProducer {
 
 impl SqsProducer {
     pub async fn send_raw(&self, payload: &str) -> Result<()> {
-        self.client
-            .send_message()
-            .queue_url(&self.queue_dsn)
-            .message_body(payload)
-            .send()
-            .await
-            .map_err(aws_to_queue_error)?;
-
-        Ok(())
+        self.send_raw_scheduled(payload, Duration::ZERO).await
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
@@ -240,6 +235,12 @@ impl SqsProducer {
     }
 
     pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
+        if payload.len() > MAX_PAYLOAD_SIZE {
+            return Err(QueueError::Generic(
+                "payload exceeds SQS size limit of 256K".into(),
+            ));
+        }
+
         self.client
             .send_message()
             .queue_url(&self.queue_dsn)
