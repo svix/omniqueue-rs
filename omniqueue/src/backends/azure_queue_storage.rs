@@ -7,34 +7,49 @@ use azure_storage_queues::{
 };
 use serde::Serialize;
 
-use crate::{queue::Acker, Delivery, QueueBackend, QueueError, Result};
+use crate::{
+    builder::Static, queue::Acker, Delivery, QueueBackend, QueueBuilder, QueueError, Result,
+};
 
 fn get_client(cfg: &AqsConfig) -> QueueClient {
-    let storage_credentials =
-        StorageCredentials::access_key(cfg.storage_account.clone(), cfg.access_key.clone());
-
-    let mut builder =
-        QueueServiceClientBuilder::new(cfg.storage_account.clone(), storage_credentials);
-    if let Some(cloud_uri) = cfg.cloud_uri.clone() {
+    let AqsConfig {
+        queue_name,
+        storage_account,
+        credentials,
+        cloud_uri,
+        ..
+    } = cfg;
+    let mut builder = QueueServiceClientBuilder::new(storage_account, credentials.clone());
+    if let Some(cloud_uri) = cloud_uri {
         builder = builder.cloud_location(azure_storage::CloudLocation::Custom {
             account: cfg.storage_account.clone(),
-            uri: cloud_uri,
+            uri: cloud_uri.clone(),
         });
     }
-    builder.build().queue_client(cfg.queue_name.clone())
+    builder.build().queue_client(queue_name)
 }
 
 #[non_exhaustive]
 pub struct AqsBackend;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl AqsBackend {
+    pub fn builder(cfg: impl Into<AqsConfig>) -> QueueBuilder<Self, Static> {
+        QueueBuilder::new(cfg.into())
+    }
+}
+
+const DEFAULT_RECV_TIMEOUT: Duration = Duration::from_secs(180);
+const DEFAULT_EMPTY_RECV_DELAY: Duration = Duration::from_millis(200);
+
+#[derive(Clone)]
 pub struct AqsConfig {
     pub queue_name: String,
-    pub empty_receive_delay: std::time::Duration,
-    pub message_ttl: std::time::Duration,
+    pub empty_receive_delay: Option<Duration>,
+    pub message_ttl: Duration,
     pub storage_account: String,
-    pub access_key: String,
+    pub credentials: StorageCredentials,
     pub cloud_uri: Option<String>,
+    pub receive_timeout: Option<Duration>,
 }
 
 impl QueueBackend for AqsBackend {
@@ -157,6 +172,7 @@ impl AqsConsumer {
     pub async fn receive(&mut self) -> Result<Delivery> {
         self.client
             .get_messages()
+            .visibility_timeout(self.config.receive_timeout.unwrap_or(DEFAULT_RECV_TIMEOUT))
             .await
             .map_err(QueueError::generic)
             .and_then(|m| m.messages.into_iter().next().ok_or(QueueError::NoData))
@@ -169,13 +185,18 @@ impl AqsConsumer {
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
         let end = std::time::Instant::now() + deadline;
-        let mut interval = tokio::time::interval(self.config.empty_receive_delay);
+        let mut interval = tokio::time::interval(
+            self.config
+                .empty_receive_delay
+                .unwrap_or(DEFAULT_EMPTY_RECV_DELAY),
+        );
         loop {
             interval.tick().await;
             let msgs = self
                 .client
                 .get_messages()
                 .number_of_messages(max_messages.try_into().unwrap_or(u8::MAX))
+                .visibility_timeout(self.config.receive_timeout.unwrap_or(DEFAULT_RECV_TIMEOUT))
                 .await
                 .map_err(QueueError::generic)
                 .map(|m| {

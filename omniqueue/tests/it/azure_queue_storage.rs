@@ -12,26 +12,34 @@ use omniqueue::{
 use serde::{Deserialize, Serialize};
 
 async fn create_queue_get_a_pair() -> (AqsProducer, AqsConsumer) {
+    create_queue_get_a_pair_with_receive_timeout(None).await
+}
+
+async fn create_queue_get_a_pair_with_receive_timeout(
+    receive_timeout: Option<Duration>,
+) -> (AqsProducer, AqsConsumer) {
     let queue_name: String = std::iter::repeat_with(fastrand::lowercase)
         .take(8)
         .collect();
 
+    let credentials = StorageCredentials::access_key(
+        azure_storage::EMULATOR_ACCOUNT.to_string(),
+        azure_storage::EMULATOR_ACCOUNT_KEY.to_string(),
+    );
     let cfg = AqsConfig {
         queue_name,
-        empty_receive_delay: Duration::from_millis(1),
+        empty_receive_delay: None,
         message_ttl: Duration::from_secs(90),
         storage_account: azure_storage::EMULATOR_ACCOUNT.to_string(),
-        access_key: azure_storage::EMULATOR_ACCOUNT_KEY.to_string(),
+        credentials: credentials.clone(),
         cloud_uri: Some(format!(
             "http://localhost:10001/{}",
             azure_storage::EMULATOR_ACCOUNT
         )),
+        receive_timeout,
     };
 
-    let storage_credentials =
-        StorageCredentials::access_key(cfg.storage_account.clone(), cfg.access_key.clone());
-
-    let cli = QueueServiceClientBuilder::new(cfg.storage_account.clone(), storage_credentials)
+    let cli = QueueServiceClientBuilder::new(cfg.storage_account.clone(), credentials)
         .cloud_location(azure_storage::CloudLocation::Custom {
             account: cfg.storage_account.clone(),
             uri: cfg.cloud_uri.clone().unwrap(),
@@ -220,4 +228,35 @@ async fn test_empty_recv_all() {
     let d = consumer.receive_all(1, deadline).await.unwrap();
     assert!(now.elapsed() > deadline);
     assert!(d.is_empty());
+}
+
+#[tokio::test]
+async fn test_receive_timeout() {
+    let (producer, mut consumer) =
+        create_queue_get_a_pair_with_receive_timeout(Some(Duration::from_secs(2))).await;
+
+    let payload = "test123";
+    producer.send_raw(payload).await.unwrap();
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+
+    tokio::time::sleep(Duration::from_secs(2) + Duration::from_millis(100)).await;
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+    d.ack().await.unwrap();
+
+    tokio::time::sleep(Duration::from_secs(2) + Duration::from_millis(100)).await;
+
+    match consumer.receive().await {
+        Err(QueueError::NoData) => {}
+        _ => panic!("Unexpected result"),
+    }
 }
