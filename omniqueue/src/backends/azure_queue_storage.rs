@@ -29,10 +29,14 @@ fn get_client(cfg: &AqsConfig) -> QueueClient {
     builder.build().queue_client(queue_name)
 }
 
+/// Note that blocking receives are not supported by Azure Queue Storage and
+/// that message order is not guaranteed.
 #[non_exhaustive]
 pub struct AqsBackend;
 
 impl AqsBackend {
+    /// Creates a new Azure Queue Storage builder with the given
+    /// configuration.
     pub fn builder(cfg: impl Into<AqsConfig>) -> QueueBuilder<Self, Static> {
         QueueBuilder::new(cfg.into())
     }
@@ -110,6 +114,7 @@ impl AqsProducer {
         let payload = serde_json::to_string(payload)?;
         self.send_raw(&payload).await
     }
+
     pub async fn send_serde_json_scheduled<P: Serialize + Sync>(
         &self,
         payload: &P,
@@ -123,6 +128,8 @@ impl AqsProducer {
 impl_queue_producer!(AqsProducer, String);
 impl_scheduled_queue_producer!(AqsProducer, String);
 
+/// Note that blocking receives are not supported by Azure Queue Storage and
+/// that message order is not guaranteed.
 pub struct AqsConsumer {
     client: QueueClient,
     config: AqsConfig,
@@ -166,9 +173,9 @@ impl AqsConsumer {
         }
     }
 
-    /// Note that blocking receives are not supported by Azure Queue Storage
-    /// and will return immediately if no messages are available for delivery
-    /// in the queue.
+    /// Note that blocking receives are not supported by Azure Queue Storage.
+    /// Calls to this method will return immediately if no messages are
+    /// available for delivery in the queue.
     pub async fn receive(&mut self) -> Result<Delivery> {
         self.client
             .get_messages()
