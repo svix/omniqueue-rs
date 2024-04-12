@@ -1,0 +1,262 @@
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
+
+use azure_storage::StorageCredentials;
+use azure_storage_queues::QueueServiceClientBuilder;
+use omniqueue::{
+    backends::{AqsBackend, AqsConfig, AqsConsumer, AqsProducer},
+    QueueBackend, QueueError,
+};
+use serde::{Deserialize, Serialize};
+
+async fn create_queue_get_a_pair() -> (AqsProducer, AqsConsumer) {
+    create_queue_get_a_pair_with_receive_timeout(None).await
+}
+
+async fn create_queue_get_a_pair_with_receive_timeout(
+    receive_timeout: Option<Duration>,
+) -> (AqsProducer, AqsConsumer) {
+    let queue_name: String = std::iter::repeat_with(fastrand::lowercase)
+        .take(8)
+        .collect();
+
+    let credentials = StorageCredentials::access_key(
+        azure_storage::EMULATOR_ACCOUNT.to_string(),
+        azure_storage::EMULATOR_ACCOUNT_KEY.to_string(),
+    );
+    let cfg = AqsConfig {
+        queue_name,
+        empty_receive_delay: None,
+        message_ttl: Duration::from_secs(90),
+        storage_account: azure_storage::EMULATOR_ACCOUNT.to_string(),
+        credentials: credentials.clone(),
+        cloud_uri: Some(format!(
+            "http://localhost:10001/{}",
+            azure_storage::EMULATOR_ACCOUNT
+        )),
+        receive_timeout,
+    };
+
+    let cli = QueueServiceClientBuilder::new(cfg.storage_account.clone(), credentials)
+        .cloud_location(azure_storage::CloudLocation::Custom {
+            account: cfg.storage_account.clone(),
+            uri: cfg.cloud_uri.clone().unwrap(),
+        })
+        .build()
+        .queue_client(cfg.queue_name.clone());
+
+    cli.create().into_future().await.unwrap();
+
+    AqsBackend::new_pair(cfg).await.unwrap()
+}
+
+#[derive(Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]
+pub struct ExType {
+    a: String,
+}
+
+#[tokio::test]
+async fn test_raw_send_recv() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let payload = "test123";
+    producer.send_raw(payload).await.unwrap();
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+    d.ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_serde_send_recv() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let payload = ExType {
+        a: "test123".to_string(),
+    };
+    producer.send_serde_json(&payload).await.unwrap();
+
+    let d = consumer.receive().await.unwrap();
+    assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
+    d.ack().await.unwrap();
+}
+
+// Note: Azure Queue Storage doesn't guarantee order of messages, hence
+// the HashSet popping and length validation instead of assuming
+// particular values:
+#[tokio::test]
+async fn test_send_recv_all_partial() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let mut res = (0..10usize)
+        .map(|i| ExType {
+            a: format!("test{i}"),
+        })
+        .collect::<HashSet<_>>();
+
+    for payload in &res {
+        producer.send_serde_json(payload).await.unwrap();
+    }
+
+    // Receive more than was sent, should return immediately
+    let now = Instant::now();
+    let deadline = Duration::from_secs(5);
+    let d = consumer.receive_all(20, deadline).await.unwrap();
+    assert!(now.elapsed() < deadline);
+    assert_eq!(d.len(), 10);
+    for i in d {
+        res.remove(&i.payload_serde_json::<ExType>().unwrap().unwrap());
+        i.ack().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_send_recv_all_full() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let mut res = (0..10usize)
+        .map(|i| ExType {
+            a: format!("test{i}"),
+        })
+        .collect::<HashSet<_>>();
+
+    for payload in &res {
+        producer.send_serde_json(payload).await.unwrap();
+    }
+
+    let d = consumer
+        .receive_all(10, Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert_eq!(d.len(), 10);
+    for i in d {
+        res.remove(&i.payload_serde_json::<ExType>().unwrap().unwrap());
+        i.ack().await.unwrap();
+    }
+    assert!(res.is_empty());
+}
+
+#[tokio::test]
+async fn test_send_recv_all_full_then_partial() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let mut res = (0..10usize)
+        .map(|i| ExType {
+            a: format!("test{i}"),
+        })
+        .collect::<HashSet<_>>();
+
+    for payload in &res {
+        producer.send_serde_json(payload).await.unwrap();
+    }
+
+    for (received_count, remaining_item_count) in [(6, 4), (4, 0)] {
+        let now = Instant::now();
+        let deadline = Duration::from_secs(2);
+        let d = consumer.receive_all(6, deadline).await.unwrap();
+        assert_eq!(d.len(), received_count);
+        for i in d {
+            let p = i.payload_serde_json::<ExType>().unwrap().unwrap();
+            res.remove(&p);
+            i.ack().await.unwrap();
+        }
+        assert_eq!(res.len(), remaining_item_count);
+        assert!(now.elapsed() < deadline);
+    }
+}
+
+#[tokio::test]
+async fn test_scheduled_recv() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let payload = "test123";
+    let delay = Duration::from_secs(1);
+    producer.send_raw_scheduled(payload, delay).await.unwrap();
+
+    let d = consumer.receive().await;
+    match d {
+        Err(QueueError::NoData) => {}
+        _ => panic!("Unexpected result"),
+    }
+
+    // Give it some buffer:
+    tokio::time::sleep(delay + Duration::from_millis(100)).await;
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+    d.ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_scheduled_recv_all() {
+    let (producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let payload = "test123";
+    let delay = Duration::from_secs(1);
+    producer.send_raw_scheduled(payload, delay).await.unwrap();
+
+    let d = consumer.receive_all(1, Duration::ZERO).await.unwrap();
+    assert!(d.is_empty());
+
+    tokio::time::sleep(delay + Duration::from_millis(100)).await;
+
+    let mut d = consumer.receive_all(1, Duration::ZERO).await.unwrap();
+    assert_eq!(d.len(), 1);
+    let mut d = d.pop().unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+    d.ack().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_empty_recv_all() {
+    let (_producer, mut consumer) = create_queue_get_a_pair().await;
+
+    let deadline = Duration::from_secs(1);
+
+    let now = Instant::now();
+    let d = consumer.receive_all(1, deadline).await.unwrap();
+    assert!(now.elapsed() > deadline);
+    assert!(d.is_empty());
+}
+
+#[tokio::test]
+async fn test_receive_timeout() {
+    let (producer, mut consumer) =
+        create_queue_get_a_pair_with_receive_timeout(Some(Duration::from_secs(2))).await;
+
+    let payload = "test123";
+    producer.send_raw(payload).await.unwrap();
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+
+    tokio::time::sleep(Duration::from_secs(2) + Duration::from_millis(100)).await;
+
+    let mut d = consumer.receive().await.unwrap();
+    assert_eq!(
+        payload,
+        &String::from_utf8(d.take_payload().unwrap()).unwrap()
+    );
+    d.ack().await.unwrap();
+
+    tokio::time::sleep(Duration::from_secs(2) + Duration::from_millis(100)).await;
+
+    match consumer.receive().await {
+        Err(QueueError::NoData) => {}
+        _ => panic!("Unexpected result"),
+    }
+}

@@ -1,3 +1,5 @@
+#[cfg(feature = "azure_queue_storage")]
+mod azure_queue_storage;
 #[cfg(feature = "gcp_pubsub")]
 mod gcp_pubsub;
 #[cfg(feature = "rabbitmq")]
