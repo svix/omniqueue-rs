@@ -236,9 +236,10 @@ impl SqsProducer {
 
     pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         if payload.len() > MAX_PAYLOAD_SIZE {
-            return Err(QueueError::Generic(
-                "payload exceeds SQS size limit of 256K".into(),
-            ));
+            return Err(QueueError::PayloadTooLarge {
+                limit: MAX_PAYLOAD_SIZE,
+                actual: payload.len(),
+            });
         }
 
         self.client
