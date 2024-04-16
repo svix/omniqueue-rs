@@ -87,6 +87,7 @@
 
 use std::fmt::Debug;
 
+use bytesize::ByteSize;
 use thiserror::Error;
 
 #[macro_use]
@@ -117,15 +118,21 @@ pub enum QueueError {
 
     #[error("no data was received from the queue")]
     NoData,
+
     #[error("(de)serialization error")]
     Serde(#[from] serde_json::Error),
 
-    #[error("{0}")]
-    Generic(Box<dyn std::error::Error + Send + Sync>),
+    #[error("payload too large: {} > {}", ByteSize(*actual as u64), ByteSize(*limit as u64))]
+    PayloadTooLarge {
+        /// The size of the serialized message, in bytes.
+        actual: usize,
+
+        /// The message size limit of the queue, in bytes.
+        limit: usize,
+    },
 
     #[error("{0}")]
-    #[deprecated = "This variant is never created inside omniqueue"]
-    Unsupported(&'static str),
+    Generic(Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl QueueError {
