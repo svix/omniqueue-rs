@@ -117,15 +117,12 @@ pub enum QueueError {
 
     #[error("no data was received from the queue")]
     NoData,
+
     #[error("(de)serialization error")]
     Serde(#[from] serde_json::Error),
 
     #[error("{0}")]
     Generic(Box<dyn std::error::Error + Send + Sync>),
-
-    #[error("{0}")]
-    #[deprecated = "This variant is never created inside omniqueue"]
-    Unsupported(&'static str),
 }
 
 impl QueueError {

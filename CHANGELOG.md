@@ -1,3 +1,10 @@
+# unreleased
+
+## Breaking changes
+
+- Remove `QueueError::Unsupported`
+  - This variant was never constructed inside `omniqueue`
+
 # 0.2.0
 
 This release is a big one, and we are considering omniqueue out of early development now.
