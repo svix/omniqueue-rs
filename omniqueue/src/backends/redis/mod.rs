@@ -34,7 +34,7 @@ use bb8::ManageConnection;
 pub use bb8_redis::RedisMultiplexedConnectionManager;
 use redis::{
     streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
-    FromRedisValue, RedisResult,
+    AsyncCommands, ExistenceCheck, FromRedisValue, RedisResult, SetExpiry, SetOptions,
 };
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
@@ -286,15 +286,16 @@ async fn background_task_delayed<R: RedisConnection>(
     // So first try to acquire the lock should it not already exist. The lock
     // expires after five seconds in case a worker crashes while holding the
     // lock.
-    let mut cmd = redis::cmd("SET");
-    cmd.arg(delayed_lock)
-        .arg(true)
-        .arg("NX")
-        .arg("PX")
-        .arg(5000);
-    // Will be Some("OK") when set or None when not set
-    let resp: Option<String> = cmd
-        .query_async(&mut *conn)
+    //
+    // Result will be Some("OK") when set or None when not set.
+    let resp: Option<String> = conn
+        .set_options(
+            delayed_lock,
+            true,
+            SetOptions::default()
+                .conditional_set(ExistenceCheck::NX)
+                .with_expiration(SetExpiry::PX(5000)),
+        )
         .await
         .map_err(QueueError::generic)?;
 
@@ -307,18 +308,18 @@ async fn background_task_delayed<R: RedisConnection>(
             .try_into()
             .map_err(QueueError::generic)?;
 
-        let keys: Vec<RawPayload> = redis::Cmd::zrangebyscore_limit(
-            delayed_queue_name,
-            0isize,
-            // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
-            // preventing premature delivery.
-            timestamp - 1,
-            0isize,
-            batch_size,
-        )
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
+        let keys: Vec<RawPayload> = conn
+            .zrangebyscore_limit(
+                delayed_queue_name,
+                0isize,
+                // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
+                // preventing premature delivery.
+                timestamp - 1,
+                0isize,
+                batch_size,
+            )
+            .await
+            .map_err(QueueError::generic)?;
 
         if !keys.is_empty() {
             trace!("Moving {} messages from delayed to main queue", keys.len());
@@ -343,22 +344,16 @@ async fn background_task_delayed<R: RedisConnection>(
                 .map_err(QueueError::generic)?;
 
             // Then remove the tasks from the delayed queue so they aren't resent
-            let _: () = redis::Cmd::zrem(delayed_queue_name, keys)
-                .query_async(&mut *conn)
+            let _: () = conn
+                .zrem(delayed_queue_name, keys)
                 .await
                 .map_err(QueueError::generic)?;
 
             // Make sure to release the lock after done processing
-            let _: () = redis::Cmd::del(delayed_lock)
-                .query_async(&mut *conn)
-                .await
-                .map_err(QueueError::generic)?;
+            let _: () = conn.del(delayed_lock).await.map_err(QueueError::generic)?;
         } else {
             // Make sure to release the lock before sleeping
-            let _: () = redis::Cmd::del(delayed_lock)
-                .query_async(&mut *conn)
-                .await
-                .map_err(QueueError::generic)?;
+            let _: () = conn.del(delayed_lock).await.map_err(QueueError::generic)?;
 
             // Wait for half a second before attempting to fetch again if nothing was found
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -455,8 +450,8 @@ async fn background_task_pending<R: RedisConnection>(
         let ids: Vec<_> = ids.iter().map(|wrapped| &wrapped.id).collect();
 
         let mut pipe = redis::pipe();
-        pipe.add_command(redis::Cmd::xack(main_queue_name, consumer_group, &ids));
-        pipe.add_command(redis::Cmd::xdel(main_queue_name, &ids));
+        pipe.xack(main_queue_name, consumer_group, &ids);
+        pipe.xdel(main_queue_name, &ids);
 
         let _: () = pipe
             .query_async(&mut *conn)
@@ -520,17 +515,17 @@ pub struct RedisProducer<M: ManageConnection> {
 
 impl<R: RedisConnection> RedisProducer<R> {
     pub async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
-        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-        redis::Cmd::xadd(
-            &self.queue_key,
-            GENERATE_STREAM_ID,
-            &[(&self.payload_key, payload)],
-        )
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
-
-        Ok(())
+        self.redis
+            .get()
+            .await
+            .map_err(QueueError::generic)?
+            .xadd(
+                &self.queue_key,
+                GENERATE_STREAM_ID,
+                &[(&self.payload_key, payload)],
+            )
+            .await
+            .map_err(QueueError::generic)
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
@@ -546,15 +541,18 @@ impl<R: RedisConnection> RedisProducer<R> {
             .try_into()
             .map_err(QueueError::generic)?;
 
-        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-        redis::Cmd::zadd(
-            &self.delayed_queue_key,
-            to_delayed_queue_key(payload),
-            timestamp,
-        )
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
+        self.redis
+            .get()
+            .await
+            .map_err(QueueError::generic)?
+            .zadd(
+                &self.delayed_queue_key,
+                to_delayed_queue_key(payload),
+                timestamp,
+            )
+            .await
+            .map_err(QueueError::generic)?;
+
         tracing::trace!("RedisQueue: event sent > (delay: {:?})", delay);
         Ok(())
     }
@@ -631,20 +629,22 @@ impl<R: RedisConnection> RedisConsumer<R> {
     }
 
     pub async fn receive(&mut self) -> Result<Delivery> {
-        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-
         // Ensure an empty vec is never returned
-        let read_out: StreamReadReply = redis::Cmd::xread_options(
-            &[&self.queue_key],
-            &[LISTEN_STREAM_ID],
-            &StreamReadOptions::default()
-                .group(&self.consumer_group, &self.consumer_name)
-                .block(100_000)
-                .count(1),
-        )
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
+        let read_out: StreamReadReply = self
+            .redis
+            .get()
+            .await
+            .map_err(QueueError::generic)?
+            .xread_options(
+                &[&self.queue_key],
+                &[LISTEN_STREAM_ID],
+                &StreamReadOptions::default()
+                    .group(&self.consumer_group, &self.consumer_name)
+                    .block(100_000)
+                    .count(1),
+            )
+            .await
+            .map_err(QueueError::generic)?;
 
         let queue = read_out.keys.into_iter().next().ok_or(QueueError::NoData)?;
 
@@ -657,24 +657,26 @@ impl<R: RedisConnection> RedisConsumer<R> {
         max_messages: usize,
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
-        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-
-        let read_out: StreamReadReply = redis::Cmd::xread_options(
-            &[&self.queue_key],
-            &[LISTEN_STREAM_ID],
-            &StreamReadOptions::default()
-                .group(&self.consumer_group, &self.consumer_name)
-                .block(
-                    deadline
-                        .as_millis()
-                        .try_into()
-                        .map_err(QueueError::generic)?,
-                )
-                .count(max_messages),
-        )
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
+        let read_out: StreamReadReply = self
+            .redis
+            .get()
+            .await
+            .map_err(QueueError::generic)?
+            .xread_options(
+                &[&self.queue_key],
+                &[LISTEN_STREAM_ID],
+                &StreamReadOptions::default()
+                    .group(&self.consumer_group, &self.consumer_name)
+                    .block(
+                        deadline
+                            .as_millis()
+                            .try_into()
+                            .map_err(QueueError::generic)?,
+                    )
+                    .count(max_messages),
+            )
+            .await
+            .map_err(QueueError::generic)?;
 
         let mut out = Vec::with_capacity(max_messages);
 
