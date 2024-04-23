@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -19,6 +20,7 @@ impl InMemoryBackend {
     }
 }
 
+#[allow(deprecated)]
 impl QueueBackend for InMemoryBackend {
     type PayloadIn = Vec<u8>;
     type PayloadOut = Vec<u8>;

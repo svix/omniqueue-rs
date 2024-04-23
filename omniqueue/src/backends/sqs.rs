@@ -11,6 +11,7 @@ use aws_sdk_sqs::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -84,6 +85,7 @@ impl From<String> for SqsConfigFull {
 
 pub struct SqsBackend;
 
+#[allow(deprecated)]
 impl SqsBackend {
     /// Creates a new Amazon SQS queue builder with the given configuration.
     ///
@@ -105,6 +107,7 @@ impl SqsBackend {
     }
 }
 
+#[allow(deprecated)]
 impl QueueBackend for SqsBackend {
     type PayloadIn = String;
     type PayloadOut = String;

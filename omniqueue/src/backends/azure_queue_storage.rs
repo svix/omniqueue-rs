@@ -7,6 +7,7 @@ use azure_storage_queues::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::Static, queue::Acker, Delivery, QueueBackend, QueueBuilder, QueueError, Result,
 };
@@ -56,6 +57,7 @@ pub struct AqsConfig {
     pub receive_timeout: Option<Duration>,
 }
 
+#[allow(deprecated)]
 impl QueueBackend for AqsBackend {
     type Config = AqsConfig;
 

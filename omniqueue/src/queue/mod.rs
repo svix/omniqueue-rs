@@ -19,6 +19,8 @@ pub use self::{
 ///
 /// This trait is meant to be implemented on an empty struct representing the
 /// backend as a whole.
+#[deprecated = "This trait is likely to be removed in the future, please open an issue if you find it useful"]
+#[allow(deprecated)]
 pub trait QueueBackend {
     type PayloadIn: QueuePayload;
     type PayloadOut: QueuePayload;
@@ -28,11 +30,15 @@ pub trait QueueBackend {
 
     type Config;
 
+    #[deprecated = "Use SomeBackend::builder(config).build_pair() instead"]
     fn new_pair(
         config: Self::Config,
     ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer)>> + Send;
 
+    #[deprecated = "Use SomeBackend::builder(config).build_producer() instead"]
     fn producing_half(config: Self::Config) -> impl Future<Output = Result<Self::Producer>> + Send;
+
+    #[deprecated = "Use SomeBackend::builder(config).build_consumer() instead"]
     fn consuming_half(config: Self::Config) -> impl Future<Output = Result<Self::Consumer>> + Send;
 }
 

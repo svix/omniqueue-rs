@@ -7,7 +7,7 @@ use azure_storage::StorageCredentials;
 use azure_storage_queues::QueueServiceClientBuilder;
 use omniqueue::{
     backends::{AqsBackend, AqsConfig, AqsConsumer, AqsProducer},
-    QueueBackend, QueueError,
+    QueueError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +49,7 @@ async fn create_queue_get_a_pair_with_receive_timeout(
 
     cli.create().into_future().await.unwrap();
 
-    AqsBackend::new_pair(cfg).await.unwrap()
+    AqsBackend::builder(cfg).build_pair().await.unwrap()
 }
 
 #[derive(Debug, Deserialize, Serialize, Eq, Hash, PartialEq)]
