@@ -42,9 +42,9 @@ use tokio::task::JoinSet;
 use tracing::trace;
 
 use crate::{
-    builder::{QueueBuilder, Static},
+    builder::{Dynamic, Static},
     queue::{Acker, Delivery, QueueBackend},
-    QueueError, Result,
+    DynConsumer, DynProducer, QueueConsumer as _, QueueError, QueueProducer as _, Result,
 };
 
 #[cfg(feature = "redis_cluster")]
@@ -97,15 +97,22 @@ pub struct RedisConfig {
 }
 
 pub struct RedisBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
+
 #[cfg(feature = "redis_cluster")]
 pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
 
 type RawPayload = Vec<u8>;
 
-impl<R: RedisConnection> RedisBackend<R> {
+impl RedisBackend {
     /// Creates a new redis queue builder with the given configuration.
-    pub fn builder(config: RedisConfig) -> QueueBuilder<Self, Static> {
-        QueueBuilder::new(config)
+    pub fn builder(config: RedisConfig) -> RedisBackendBuilder {
+        RedisBackendBuilder::new(config)
+    }
+
+    #[cfg(feature = "redis_cluster")]
+    /// Creates a new redis cluster queue builder with the given configuration.
+    pub fn cluster_builder(config: RedisConfig) -> RedisClusterBackendBuilder {
+        RedisBackendBuilder::new(config)
     }
 }
 
@@ -120,6 +127,54 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     type Config = RedisConfig;
 
     async fn new_pair(cfg: RedisConfig) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
+        RedisBackendBuilder::new(cfg).build_pair().await
+    }
+
+    async fn producing_half(cfg: RedisConfig) -> Result<RedisProducer<R>> {
+        RedisBackendBuilder::new(cfg).build_producer().await
+    }
+
+    async fn consuming_half(cfg: RedisConfig) -> Result<RedisConsumer<R>> {
+        RedisBackendBuilder::new(cfg).build_consumer().await
+    }
+}
+
+pub struct RedisBackendBuilder<R = RedisMultiplexedConnectionManager, S = Static> {
+    config: RedisConfig,
+    _phantom: PhantomData<fn() -> (R, S)>,
+}
+
+#[cfg(feature = "redis_cluster")]
+pub type RedisClusterBackendBuilder = RedisBackendBuilder<RedisClusterConnectionManager>;
+
+impl<R: RedisConnection> RedisBackendBuilder<R> {
+    fn new(config: RedisConfig) -> Self {
+        Self {
+            config,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Set a custom [`RedisConnection`] mananager to use.
+    ///
+    /// This method only makes sense to call if you have a custom connection
+    /// manager implementation. For clustered redis, use
+    /// [`.cluster()`][Self::cluster].
+    pub fn connection_manager<R2>(self) -> RedisBackendBuilder<R2> {
+        RedisBackendBuilder {
+            config: self.config,
+            _phantom: PhantomData,
+        }
+    }
+
+    #[cfg(feature = "redis_cluster")]
+    pub fn cluster(self) -> RedisBackendBuilder<RedisClusterConnectionManager> {
+        self.connection_manager()
+    }
+
+    pub async fn build_pair(self) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
+        let cfg = self.config;
+
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -148,7 +203,9 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
         ))
     }
 
-    async fn producing_half(cfg: RedisConfig) -> Result<RedisProducer<R>> {
+    pub async fn build_producer(self) -> Result<RedisProducer<R>> {
+        let cfg = self.config;
+
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -166,7 +223,9 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
         })
     }
 
-    async fn consuming_half(cfg: RedisConfig) -> Result<RedisConsumer<R>> {
+    pub async fn build_consumer(self) -> Result<RedisConsumer<R>> {
+        let cfg = self.config;
+
         let redis = R::from_dsn(&cfg.dsn)?;
         let redis = bb8::Pool::builder()
             .max_size(cfg.max_connections.into())
@@ -184,6 +243,30 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
             payload_key: cfg.payload_key,
             _background_tasks: background_tasks,
         })
+    }
+
+    pub fn make_dynamic(self) -> RedisBackendBuilder<R, Dynamic> {
+        RedisBackendBuilder {
+            config: self.config,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
+    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
+        let (p, c) = RedisBackend::<R>::new_pair(self.config).await?;
+        Ok((p.into_dyn(), c.into_dyn()))
+    }
+
+    pub async fn build_producer(self) -> Result<DynProducer> {
+        let p = RedisBackend::<R>::producing_half(self.config).await?;
+        Ok(p.into_dyn())
+    }
+
+    pub async fn build_consumer(self) -> Result<DynConsumer> {
+        let c = RedisBackend::<R>::consuming_half(self.config).await?;
+        Ok(c.into_dyn())
     }
 }
 
