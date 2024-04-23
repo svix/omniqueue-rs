@@ -19,7 +19,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
-      - uses: Swatinem/rust-cache@v2,
+      - uses: Swatinem/rust-cache@v2
         # only restore cache for faster publishing, don't save back results
         save-if: false
 
