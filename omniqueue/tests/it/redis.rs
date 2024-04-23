@@ -1,9 +1,6 @@
 use std::time::{Duration, Instant};
 
-use omniqueue::{
-    backends::{RedisBackend, RedisConfig},
-    QueueBuilder,
-};
+use omniqueue::backends::{redis::RedisBackendBuilder, RedisBackend, RedisConfig};
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +24,7 @@ impl Drop for RedisStreamDrop {
 ///
 /// This will also return a [`RedisStreamDrop`] to clean up the stream after the
 /// test ends.
-async fn make_test_queue() -> (QueueBuilder<RedisBackend>, RedisStreamDrop) {
+async fn make_test_queue() -> (RedisBackendBuilder, RedisStreamDrop) {
     let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
