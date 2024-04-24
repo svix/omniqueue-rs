@@ -399,10 +399,6 @@ async fn background_task_delayed<R: RedisConnection>(
             // For each task, XADD them to the MAIN queue
             let mut pipe = redis::pipe();
             for key in &keys {
-                // XXX: would be sort of nice if we could borrow a slice of bytes instead
-                // of allocating a vec for each payload.
-                // I bet serde allows for this somehow, but redis probably ends up allocating
-                // before the value hits the wire anyway.
                 let payload = from_delayed_queue_key(key)?;
                 let _ = pipe.xadd(
                     main_queue_name,
@@ -662,14 +658,14 @@ fn to_delayed_queue_key(payload: &[u8]) -> RawPayload {
 }
 
 /// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &[u8]) -> Result<RawPayload> {
+fn from_delayed_queue_key(key: &[u8]) -> Result<&[u8]> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
     let sep_pos = key
         .iter()
         .position(|&byte| byte == b'|')
         .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    Ok(key[sep_pos + 1..].to_owned())
+    Ok(&key[sep_pos + 1..])
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
