@@ -1,20 +1,22 @@
 //! Redis stream-based queue implementation
 //!
 //! # Redis Streams in Brief
+//!
 //! Redis has a built-in queue called streams. With consumer groups and
 //! consumers, messages in this queue will automatically be put into a pending
 //! queue when read and deleted when acknowledged.
 //!
 //! # The Implementation
+//!
 //! This implementation uses this to allow worker instances to race for messages
 //! to dispatch which are then, ideally, acknowledged. If a message is
-//! processing for more than 45 seconds, it is reinserted at the back of the
-//! queue to be tried again.
+//! not acknowledged before a configured deadline, it is reinserted at the back
+//! of the queue to be tried again.
 //!
 //! This implementation uses the following data structures:
 //! - A "tasks to be processed" stream - which is what the consumer listens to
 //!   for tasks. AKA: Main
-//! - A ZSET for delayed tasks with the sort order being the
+//! - A `ZSET` for delayed tasks with the sort order being the
 //!   time-to-be-delivered AKA: Delayed
 //!
 //! The implementation spawns an additional worker that monitors both the zset
