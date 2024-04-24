@@ -1,20 +1,22 @@
 //! Redis stream-based queue implementation
 //!
 //! # Redis Streams in Brief
+//!
 //! Redis has a built-in queue called streams. With consumer groups and
 //! consumers, messages in this queue will automatically be put into a pending
 //! queue when read and deleted when acknowledged.
 //!
 //! # The Implementation
+//!
 //! This implementation uses this to allow worker instances to race for messages
 //! to dispatch which are then, ideally, acknowledged. If a message is
-//! processing for more than 45 seconds, it is reinserted at the back of the
-//! queue to be tried again.
+//! not acknowledged before a configured deadline, it is reinserted at the back
+//! of the queue to be tried again.
 //!
 //! This implementation uses the following data structures:
 //! - A "tasks to be processed" stream - which is what the consumer listens to
 //!   for tasks. AKA: Main
-//! - A ZSET for delayed tasks with the sort order being the
+//! - A `ZSET` for delayed tasks with the sort order being the
 //!   time-to-be-delivered AKA: Delayed
 //!
 //! The implementation spawns an additional worker that monitors both the zset
@@ -27,7 +29,11 @@
 // have generic return types. This is cleaner than the turbofish operator in my opinion.
 #![allow(clippy::let_unit_value)]
 
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    marker::PhantomData,
+    sync::Arc,
+    time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
@@ -39,7 +45,7 @@ use redis::{
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use tokio::task::JoinSet;
-use tracing::trace;
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     builder::{Dynamic, Static},
@@ -173,75 +179,69 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     }
 
     pub async fn build_pair(self) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
-        let cfg = self.config;
-
-        let redis = R::from_dsn(&cfg.dsn)?;
+        let redis = R::from_dsn(&self.config.dsn)?;
         let redis = bb8::Pool::builder()
-            .max_size(cfg.max_connections.into())
+            .max_size(self.config.max_connections.into())
             .build(redis)
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
+        let background_tasks = self.start_background_tasks(redis.clone()).await;
 
         Ok((
             RedisProducer {
                 redis: redis.clone(),
-                queue_key: cfg.queue_key.clone(),
-                delayed_queue_key: cfg.delayed_queue_key,
-                payload_key: cfg.payload_key.clone(),
+                queue_key: self.config.queue_key.clone(),
+                delayed_queue_key: self.config.delayed_queue_key,
+                payload_key: self.config.payload_key.clone(),
                 _background_tasks: background_tasks.clone(),
             },
             RedisConsumer {
                 redis,
-                queue_key: cfg.queue_key,
-                consumer_group: cfg.consumer_group,
-                consumer_name: cfg.consumer_name,
-                payload_key: cfg.payload_key,
+                queue_key: self.config.queue_key,
+                consumer_group: self.config.consumer_group,
+                consumer_name: self.config.consumer_name,
+                payload_key: self.config.payload_key,
                 _background_tasks: background_tasks.clone(),
             },
         ))
     }
 
     pub async fn build_producer(self) -> Result<RedisProducer<R>> {
-        let cfg = self.config;
-
-        let redis = R::from_dsn(&cfg.dsn)?;
+        let redis = R::from_dsn(&self.config.dsn)?;
         let redis = bb8::Pool::builder()
-            .max_size(cfg.max_connections.into())
+            .max_size(self.config.max_connections.into())
             .build(redis)
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
+        let _background_tasks = self.start_background_tasks(redis.clone()).await;
         Ok(RedisProducer {
             redis,
-            queue_key: cfg.queue_key,
-            delayed_queue_key: cfg.delayed_queue_key,
-            payload_key: cfg.payload_key,
-            _background_tasks: background_tasks,
+            queue_key: self.config.queue_key,
+            delayed_queue_key: self.config.delayed_queue_key,
+            payload_key: self.config.payload_key,
+            _background_tasks,
         })
     }
 
     pub async fn build_consumer(self) -> Result<RedisConsumer<R>> {
-        let cfg = self.config;
-
-        let redis = R::from_dsn(&cfg.dsn)?;
+        let redis = R::from_dsn(&self.config.dsn)?;
         let redis = bb8::Pool::builder()
-            .max_size(cfg.max_connections.into())
+            .max_size(self.config.max_connections.into())
             .build(redis)
             .await
             .map_err(QueueError::generic)?;
 
-        let background_tasks = Arc::new(start_background_tasks(redis.clone(), &cfg).await);
+        let _background_tasks = self.start_background_tasks(redis.clone()).await;
 
         Ok(RedisConsumer {
             redis,
-            queue_key: cfg.queue_key,
-            consumer_group: cfg.consumer_group,
-            consumer_name: cfg.consumer_name,
-            payload_key: cfg.payload_key,
-            _background_tasks: background_tasks,
+            queue_key: self.config.queue_key,
+            consumer_group: self.config.consumer_group,
+            consumer_name: self.config.consumer_name,
+            payload_key: self.config.payload_key,
+            _background_tasks,
         })
     }
 
@@ -250,6 +250,81 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             config: self.config,
             _phantom: PhantomData,
         }
+    }
+
+    // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way to
+    // implement it in a way that makes good sense here.
+    // We need access to the pool, and various bits of config to spawn a task, but
+    // none of that is available where it matters right now.
+    // Doing my own thing for now - standalone function that takes what it needs.
+    async fn start_background_tasks(&self, redis: bb8::Pool<R>) -> Arc<JoinSet<Result<()>>> {
+        let mut join_set = JoinSet::new();
+
+        // FIXME(onelson): does it even make sense to treat delay support as optional
+        // here?
+        if self.config.delayed_queue_key.is_empty() {
+            warn!("no delayed_queue_key specified - delayed task scheduler disabled");
+        } else {
+            join_set.spawn({
+                let pool = redis.clone();
+                let queue_key = self.config.queue_key.to_owned();
+                let delayed_queue_key = self.config.delayed_queue_key.to_owned();
+                let delayed_lock_key = self.config.delayed_lock_key.to_owned();
+                let payload_key = self.config.payload_key.to_owned();
+
+                #[rustfmt::skip]
+                debug!(
+                    delayed_queue_key, delayed_lock_key,
+                    "spawning delayed task scheduler"
+                );
+
+                async move {
+                    loop {
+                        if let Err(err) = background_task_delayed(
+                            &pool,
+                            &queue_key,
+                            &delayed_queue_key,
+                            &delayed_lock_key,
+                            &payload_key,
+                        )
+                        .await
+                        {
+                            error!("{err}");
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        };
+                    }
+                }
+            });
+        }
+
+        join_set.spawn({
+            let pool = redis.clone();
+            let queue_key = self.config.queue_key.to_owned();
+            let consumer_group = self.config.consumer_group.to_owned();
+            let consumer_name = self.config.consumer_name.to_owned();
+            let ack_deadline_ms = self.config.ack_deadline_ms;
+
+            async move {
+                loop {
+                    if let Err(err) = background_task_pending(
+                        &pool,
+                        &queue_key,
+                        &consumer_group,
+                        &consumer_name,
+                        ack_deadline_ms,
+                    )
+                    .await
+                    {
+                        error!("{err}");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
+                }
+            }
+        });
+
+        Arc::new(join_set)
     }
 }
 
@@ -270,83 +345,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
     }
 }
 
-// FIXME(onelson): there's a trait, [`SchedulerBackend`], but no obvious way to
-// implement it in a way that makes good sense here.
-// We need access to the pool, and various bits of config to spawn a task, but
-// none of that is available where it matters right now.
-// Doing my own thing for now - standalone function that takes what it needs.
-async fn start_background_tasks<R: RedisConnection>(
-    redis: bb8::Pool<R>,
-    cfg: &RedisConfig,
-) -> JoinSet<Result<()>> {
-    let mut join_set = JoinSet::new();
-
-    // FIXME(onelson): does it even make sense to treat delay support as optional
-    // here?
-    if cfg.delayed_queue_key.is_empty() {
-        tracing::warn!("no delayed_queue_key specified - delayed task scheduler disabled");
-    } else {
-        join_set.spawn({
-            let pool = redis.clone();
-            let queue_key = cfg.queue_key.to_owned();
-            let delayed_queue_key = cfg.delayed_queue_key.to_owned();
-            let delayed_lock_key = cfg.delayed_lock_key.to_owned();
-            let payload_key = cfg.payload_key.to_owned();
-
-            tracing::debug!(
-                delayed_queue_key,
-                delayed_lock_key,
-                "spawning delayed task scheduler"
-            );
-
-            async move {
-                loop {
-                    if let Err(err) = background_task_delayed(
-                        &pool,
-                        &queue_key,
-                        &delayed_queue_key,
-                        &delayed_lock_key,
-                        &payload_key,
-                    )
-                    .await
-                    {
-                        tracing::error!("{}", err);
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    };
-                }
-            }
-        });
-    }
-
-    join_set.spawn({
-        let pool = redis.clone();
-        let queue_key = cfg.queue_key.to_owned();
-        let consumer_group = cfg.consumer_group.to_owned();
-        let consumer_name = cfg.consumer_name.to_owned();
-        let task_timeout_ms = cfg.ack_deadline_ms;
-
-        async move {
-            loop {
-                if let Err(err) = background_task_pending(
-                    &pool,
-                    &queue_key,
-                    &consumer_group,
-                    &consumer_name,
-                    task_timeout_ms,
-                )
-                .await
-                {
-                    tracing::error!("{}", err);
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                }
-            }
-        }
-    });
-    join_set
-}
-
 /// Special ID for XADD command's which generates a stream ID automatically
 const GENERATE_STREAM_ID: &str = "*";
 /// Special ID for XREADGROUP commands which reads any new messages
@@ -361,7 +359,7 @@ async fn background_task_delayed<R: RedisConnection>(
     delayed_lock: &str,
     payload_key: &str,
 ) -> Result<()> {
-    let batch_size: isize = 50;
+    const BATCH_SIZE: isize = 50;
 
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -384,23 +382,14 @@ async fn background_task_delayed<R: RedisConnection>(
 
     if resp.as_deref() == Some("OK") {
         // First look for delayed keys whose time is up and add them to the main queue
-        let timestamp: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(QueueError::generic)?
-            .as_secs()
-            .try_into()
+        //
+        // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
+        // preventing premature delivery.
+        let timestamp = unix_timestamp(SystemTime::now() - Duration::from_secs(1))
             .map_err(QueueError::generic)?;
 
         let keys: Vec<RawPayload> = conn
-            .zrangebyscore_limit(
-                delayed_queue_name,
-                0isize,
-                // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
-                // preventing premature delivery.
-                timestamp - 1,
-                0isize,
-                batch_size,
-            )
+            .zrangebyscore_limit(delayed_queue_name, 0, timestamp, 0, BATCH_SIZE)
             .await
             .map_err(QueueError::generic)?;
 
@@ -410,10 +399,6 @@ async fn background_task_delayed<R: RedisConnection>(
             // For each task, XADD them to the MAIN queue
             let mut pipe = redis::pipe();
             for key in &keys {
-                // XXX: would be sort of nice if we could borrow a slice of bytes instead
-                // of allocating a vec for each payload.
-                // I bet serde allows for this somehow, but redis probably ends up allocating
-                // before the value hits the wire anyway.
                 let payload = from_delayed_queue_key(key)?;
                 let _ = pipe.xadd(
                     main_queue_name,
@@ -482,7 +467,7 @@ async fn background_task_pending<R: RedisConnection>(
     main_queue_name: &str,
     consumer_group: &str,
     consumer_name: &str,
-    pending_duration: i64,
+    ack_deadline_ms: i64,
 ) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -492,7 +477,7 @@ async fn background_task_pending<R: RedisConnection>(
     cmd.arg(main_queue_name)
         .arg(consumer_group)
         .arg(consumer_name)
-        .arg(pending_duration)
+        .arg(ack_deadline_ms)
         .arg("-")
         .arg("COUNT")
         .arg(PENDING_BATCH_SIZE);
@@ -617,12 +602,7 @@ impl<R: RedisConnection> RedisProducer<R> {
     }
 
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
-        let timestamp: i64 = (std::time::SystemTime::now() + delay)
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(QueueError::generic)?
-            .as_secs()
-            .try_into()
-            .map_err(QueueError::generic)?;
+        let timestamp = unix_timestamp(SystemTime::now() + delay).map_err(QueueError::generic)?;
 
         self.redis
             .get()
@@ -636,7 +616,7 @@ impl<R: RedisConnection> RedisProducer<R> {
             .await
             .map_err(QueueError::generic)?;
 
-        tracing::trace!("RedisQueue: event sent > (delay: {:?})", delay);
+        trace!(?delay, "event sent");
         Ok(())
     }
 
@@ -652,6 +632,10 @@ impl<R: RedisConnection> RedisProducer<R> {
 
 impl_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
 impl_scheduled_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
+
+fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
+    Ok(time.duration_since(UNIX_EPOCH)?.as_secs())
+}
 
 /// Acts as a payload prefix for when payloads are written to zset keys.
 ///
@@ -674,14 +658,14 @@ fn to_delayed_queue_key(payload: &[u8]) -> RawPayload {
 }
 
 /// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &[u8]) -> Result<RawPayload> {
+fn from_delayed_queue_key(key: &[u8]) -> Result<&[u8]> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
     let sep_pos = key
         .iter()
         .position(|&byte| byte == b'|')
         .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    Ok(key[sep_pos + 1..].to_owned())
+    Ok(&key[sep_pos + 1..])
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
