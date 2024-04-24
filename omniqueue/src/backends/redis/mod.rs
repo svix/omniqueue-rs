@@ -328,7 +328,7 @@ async fn start_background_tasks<R: RedisConnection>(
         let queue_key = cfg.queue_key.to_owned();
         let consumer_group = cfg.consumer_group.to_owned();
         let consumer_name = cfg.consumer_name.to_owned();
-        let task_timeout_ms = cfg.ack_deadline_ms;
+        let ack_deadline_ms = cfg.ack_deadline_ms;
 
         async move {
             loop {
@@ -337,7 +337,7 @@ async fn start_background_tasks<R: RedisConnection>(
                     &queue_key,
                     &consumer_group,
                     &consumer_name,
-                    task_timeout_ms,
+                    ack_deadline_ms,
                 )
                 .await
                 {
@@ -477,7 +477,7 @@ async fn background_task_pending<R: RedisConnection>(
     main_queue_name: &str,
     consumer_group: &str,
     consumer_name: &str,
-    pending_duration: i64,
+    ack_deadline_ms: i64,
 ) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -487,7 +487,7 @@ async fn background_task_pending<R: RedisConnection>(
     cmd.arg(main_queue_name)
         .arg(consumer_group)
         .arg(consumer_name)
-        .arg(pending_duration)
+        .arg(ack_deadline_ms)
         .arg("-")
         .arg("COUNT")
         .arg(PENDING_BATCH_SIZE);
