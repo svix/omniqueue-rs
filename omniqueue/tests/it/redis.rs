@@ -30,7 +30,7 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisStreamDrop) {
         .collect();
 
     let client = Client::open(ROOT_URL).unwrap();
-    let mut conn = client.get_async_connection().await.unwrap();
+    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
 
     let _: () = conn
         .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
