@@ -43,7 +43,7 @@ use redis::{
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use tokio::task::JoinSet;
-use tracing::trace;
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     builder::{Dynamic, Static},
@@ -288,7 +288,7 @@ async fn start_background_tasks<R: RedisConnection>(
     // FIXME(onelson): does it even make sense to treat delay support as optional
     // here?
     if cfg.delayed_queue_key.is_empty() {
-        tracing::warn!("no delayed_queue_key specified - delayed task scheduler disabled");
+        warn!("no delayed_queue_key specified - delayed task scheduler disabled");
     } else {
         join_set.spawn({
             let pool = redis.clone();
@@ -297,9 +297,9 @@ async fn start_background_tasks<R: RedisConnection>(
             let delayed_lock_key = cfg.delayed_lock_key.to_owned();
             let payload_key = cfg.payload_key.to_owned();
 
-            tracing::debug!(
-                delayed_queue_key,
-                delayed_lock_key,
+            #[rustfmt::skip]
+            debug!(
+                delayed_queue_key, delayed_lock_key,
                 "spawning delayed task scheduler"
             );
 
@@ -314,7 +314,7 @@ async fn start_background_tasks<R: RedisConnection>(
                     )
                     .await
                     {
-                        tracing::error!("{}", err);
+                        error!("{err}");
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     };
@@ -341,7 +341,7 @@ async fn start_background_tasks<R: RedisConnection>(
                 )
                 .await
                 {
-                    tracing::error!("{}", err);
+                    error!("{err}");
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
@@ -626,7 +626,7 @@ impl<R: RedisConnection> RedisProducer<R> {
             .await
             .map_err(QueueError::generic)?;
 
-        tracing::trace!("RedisQueue: event sent > (delay: {:?})", delay);
+        trace!(?delay, "event sent");
         Ok(())
     }
 
