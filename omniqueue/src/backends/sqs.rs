@@ -94,14 +94,17 @@ impl SqsBackend {
         QueueBuilder::new(cfg.into())
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_pair() instead"]
     pub async fn new_pair(cfg: impl Into<SqsConfigFull>) -> Result<(SqsProducer, SqsConsumer)> {
         <Self as QueueBackend>::new_pair(cfg.into()).await
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_producer() instead"]
     pub async fn producing_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsProducer> {
         <Self as QueueBackend>::producing_half(cfg.into()).await
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_consumer() instead"]
     pub async fn consuming_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsConsumer> {
         <Self as QueueBackend>::consuming_half(cfg.into()).await
     }
