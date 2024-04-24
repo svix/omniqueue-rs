@@ -35,13 +35,9 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use async_trait::async_trait;
 use bb8::ManageConnection;
 pub use bb8_redis::RedisConnectionManager;
-use redis::{
-    streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
-    AsyncCommands, ExistenceCheck, FromRedisValue, RedisResult, SetExpiry, SetOptions,
-};
+use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use thiserror::Error;
@@ -51,12 +47,14 @@ use tracing::{debug, error, trace, warn};
 #[allow(deprecated)]
 use crate::{
     builder::{Dynamic, Static},
-    queue::{Acker, Delivery, QueueBackend},
+    queue::{Delivery, QueueBackend},
     DynConsumer, DynProducer, QueueConsumer as _, QueueError, QueueProducer as _, Result,
 };
 
 #[cfg(feature = "redis_cluster")]
 mod cluster;
+mod streams;
+
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
 
@@ -344,31 +342,13 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             });
         }
 
-        join_set.spawn({
-            let pool = redis.clone();
-            let queue_key = self.config.queue_key.to_owned();
-            let consumer_group = self.config.consumer_group.to_owned();
-            let consumer_name = self.config.consumer_name.to_owned();
-            let ack_deadline_ms = self.config.ack_deadline_ms;
-
-            async move {
-                loop {
-                    if let Err(err) = background_task_pending(
-                        &pool,
-                        &queue_key,
-                        &consumer_group,
-                        &consumer_name,
-                        ack_deadline_ms,
-                    )
-                    .await
-                    {
-                        error!("{err}");
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                }
-            }
-        });
+        join_set.spawn(streams::background_task_pending(
+            redis.clone(),
+            self.config.queue_key.to_owned(),
+            self.config.consumer_group.to_owned(),
+            self.config.consumer_name.to_owned(),
+            self.config.ack_deadline_ms,
+        ));
 
         join_set.spawn({
             async move {
@@ -402,11 +382,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
         Ok(c.into_dyn())
     }
 }
-
-/// Special ID for XADD command's which generates a stream ID automatically
-const GENERATE_STREAM_ID: &str = "*";
-/// Special ID for XREADGROUP commands which reads any new messages
-const LISTEN_STREAM_ID: &str = ">";
 
 /// Moves "due" messages from a sorted set, where delayed messages are shelved,
 /// back onto the main queue.
@@ -454,20 +429,7 @@ async fn background_task_delayed<R: RedisConnection>(
         if !keys.is_empty() {
             trace!("Moving {} messages from delayed to main queue", keys.len());
 
-            // For each task, XADD them to the MAIN queue
-            let mut pipe = redis::pipe();
-            for key in &keys {
-                let payload = from_delayed_queue_key(key)?;
-                let _ = pipe.xadd(
-                    main_queue_name,
-                    GENERATE_STREAM_ID,
-                    &[(payload_key, payload)],
-                );
-            }
-            let _: () = pipe
-                .query_async(&mut *conn)
-                .await
-                .map_err(QueueError::generic)?;
+            streams::add_to_main_queue(&keys, main_queue_name, payload_key, &mut *conn).await?;
 
             // Then remove the tasks from the delayed queue so they aren't resent
             let _: () = conn
@@ -492,145 +454,6 @@ async fn background_task_delayed<R: RedisConnection>(
     Ok(())
 }
 
-struct StreamAutoclaimReply {
-    ids: Vec<StreamId>,
-}
-
-impl FromRedisValue for StreamAutoclaimReply {
-    fn from_redis_value(v: &redis::Value) -> RedisResult<Self> {
-        // First try the two member array from before Redis 7.0
-        match <((), StreamClaimReply)>::from_redis_value(v) {
-            Ok(res) => Ok(StreamAutoclaimReply { ids: res.1.ids }),
-
-            // If it's a type error, then try the three member array from Redis 7.0 and after
-            Err(e) if e.kind() == redis::ErrorKind::TypeError => {
-                <((), StreamClaimReply, ())>::from_redis_value(v)
-                    .map(|ok| StreamAutoclaimReply { ids: ok.1.ids })
-            }
-            // Any other error should be returned as is
-            Err(e) => Err(e),
-        }
-    }
-}
-
-/// The maximum number of pending messages to reinsert into the queue after
-/// becoming stale per loop
-// FIXME(onelson): expose in config?
-const PENDING_BATCH_SIZE: i16 = 1000;
-
-/// Scoops up messages that have been claimed but not handled by a deadline,
-/// then re-queues them.
-async fn background_task_pending<R: RedisConnection>(
-    pool: &bb8::Pool<R>,
-    main_queue_name: &str,
-    consumer_group: &str,
-    consumer_name: &str,
-    ack_deadline_ms: i64,
-) -> Result<()> {
-    let mut conn = pool.get().await.map_err(QueueError::generic)?;
-
-    // Every iteration checks whether the processing queue has items that should
-    // be picked back up, claiming them in the process
-    let mut cmd = redis::cmd("XAUTOCLAIM");
-    cmd.arg(main_queue_name)
-        .arg(consumer_group)
-        .arg(consumer_name)
-        .arg(ack_deadline_ms)
-        .arg("-")
-        .arg("COUNT")
-        .arg(PENDING_BATCH_SIZE);
-
-    let StreamAutoclaimReply { ids } = cmd
-        .query_async(&mut *conn)
-        .await
-        .map_err(QueueError::generic)?;
-
-    if !ids.is_empty() {
-        trace!("Moving {} unhandled messages back to the queue", ids.len());
-
-        let mut pipe = redis::pipe();
-
-        // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
-        for StreamId { map, .. } in &ids {
-            let _ = pipe.xadd(
-                main_queue_name,
-                GENERATE_STREAM_ID,
-                &map.iter()
-                    .filter_map(|(k, v)| {
-                        if let redis::Value::Data(data) = v {
-                            Some((k.as_str(), data.as_slice()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<(&str, &[u8])>>(),
-            );
-        }
-
-        let _: () = pipe
-            .query_async(&mut *conn)
-            .await
-            .map_err(QueueError::generic)?;
-
-        // Acknowledge all the stale ones so the pending queue is cleared
-        let ids: Vec<_> = ids.iter().map(|wrapped| &wrapped.id).collect();
-
-        let mut pipe = redis::pipe();
-        pipe.xack(main_queue_name, consumer_group, &ids);
-        pipe.xdel(main_queue_name, &ids);
-
-        let _: () = pipe
-            .query_async(&mut *conn)
-            .await
-            .map_err(QueueError::generic)?;
-    } else {
-        // Wait for half a second before attempting to fetch again if nothing was found
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-
-    Ok(())
-}
-
-struct RedisAcker<M: ManageConnection> {
-    redis: bb8::Pool<M>,
-    queue_key: String,
-    consumer_group: String,
-    entry_id: String,
-
-    already_acked_or_nacked: bool,
-}
-
-#[async_trait]
-impl<R: RedisConnection> Acker for RedisAcker<R> {
-    async fn ack(&mut self) -> Result<()> {
-        if self.already_acked_or_nacked {
-            return Err(QueueError::CannotAckOrNackTwice);
-        }
-
-        self.already_acked_or_nacked = true;
-
-        let mut pipeline = redis::pipe();
-        pipeline.xack(&self.queue_key, &self.consumer_group, &[&self.entry_id]);
-        pipeline.xdel(&self.queue_key, &[&self.entry_id]);
-
-        let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
-        pipeline
-            .query_async(&mut *conn)
-            .await
-            .map_err(QueueError::generic)
-    }
-
-    async fn nack(&mut self) -> Result<()> {
-        if self.already_acked_or_nacked {
-            return Err(QueueError::CannotAckOrNackTwice);
-        }
-
-        self.already_acked_or_nacked = true;
-
-        Ok(())
-    }
-}
-
 pub struct RedisProducer<M: ManageConnection> {
     redis: bb8::Pool<M>,
     queue_key: String,
@@ -641,17 +464,7 @@ pub struct RedisProducer<M: ManageConnection> {
 
 impl<R: RedisConnection> RedisProducer<R> {
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
-        self.redis
-            .get()
-            .await
-            .map_err(QueueError::generic)?
-            .xadd(
-                &self.queue_key,
-                GENERATE_STREAM_ID,
-                &[(&self.payload_key, payload)],
-            )
-            .await
-            .map_err(QueueError::generic)
+        streams::send_raw(self, payload).await
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
@@ -736,45 +549,8 @@ pub struct RedisConsumer<M: ManageConnection> {
 }
 
 impl<R: RedisConnection> RedisConsumer<R> {
-    fn wrap_entry(&self, entry: StreamId) -> Result<Delivery> {
-        let entry_id = entry.id.clone();
-        let payload = entry.map.get(&self.payload_key).ok_or(QueueError::NoData)?;
-        let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
-
-        Ok(Delivery {
-            payload: Some(payload),
-            acker: Box::new(RedisAcker {
-                redis: self.redis.clone(),
-                queue_key: self.queue_key.clone(),
-                consumer_group: self.consumer_group.clone(),
-                entry_id,
-                already_acked_or_nacked: false,
-            }),
-        })
-    }
-
     pub async fn receive(&mut self) -> Result<Delivery> {
-        // Ensure an empty vec is never returned
-        let read_out: StreamReadReply = self
-            .redis
-            .get()
-            .await
-            .map_err(QueueError::generic)?
-            .xread_options(
-                &[&self.queue_key],
-                &[LISTEN_STREAM_ID],
-                &StreamReadOptions::default()
-                    .group(&self.consumer_group, &self.consumer_name)
-                    .block(100_000)
-                    .count(1),
-            )
-            .await
-            .map_err(QueueError::generic)?;
-
-        let queue = read_out.keys.into_iter().next().ok_or(QueueError::NoData)?;
-
-        let entry = queue.ids.into_iter().next().ok_or(QueueError::NoData)?;
-        self.wrap_entry(entry)
+        streams::receive(self).await
     }
 
     pub async fn receive_all(
@@ -782,35 +558,7 @@ impl<R: RedisConnection> RedisConsumer<R> {
         max_messages: usize,
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
-        let read_out: StreamReadReply = self
-            .redis
-            .get()
-            .await
-            .map_err(QueueError::generic)?
-            .xread_options(
-                &[&self.queue_key],
-                &[LISTEN_STREAM_ID],
-                &StreamReadOptions::default()
-                    .group(&self.consumer_group, &self.consumer_name)
-                    .block(
-                        deadline
-                            .as_millis()
-                            .try_into()
-                            .map_err(QueueError::generic)?,
-                    )
-                    .count(max_messages),
-            )
-            .await
-            .map_err(QueueError::generic)?;
-
-        let mut out = Vec::with_capacity(max_messages);
-
-        if let Some(queue) = read_out.keys.into_iter().next() {
-            for entry in queue.ids {
-                out.push(self.wrap_entry(entry)?);
-            }
-        }
-        Ok(out)
+        streams::receive_all(self, deadline, max_messages).await
     }
 }
 
