@@ -30,6 +30,7 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
     /// This constructor exists primarily as an implementation detail of
     /// `SomeQueueBackend::builder` associated function, which are the more
     /// convenient way of creating a queue builder.
+    #[deprecated = "Use SomeBackend::builder() instead"]
     pub fn new(config: Q::Config) -> Self {
         Self {
             config,

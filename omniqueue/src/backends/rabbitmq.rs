@@ -45,6 +45,7 @@ pub struct RabbitMqBackend;
 impl RabbitMqBackend {
     /// Creates a new RabbitMQ queue builder with the given configuration.
     pub fn builder(config: RabbitMqConfig) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(config)
     }
 }

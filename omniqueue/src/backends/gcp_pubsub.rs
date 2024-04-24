@@ -27,6 +27,7 @@ impl GcpPubSubBackend {
     /// Creates a new Google Cloud Pub/Sub queue builder with the given
     /// configuration.
     pub fn builder(config: GcpPubSubConfig) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(config)
     }
 }

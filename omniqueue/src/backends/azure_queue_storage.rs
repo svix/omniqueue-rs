@@ -39,6 +39,7 @@ impl AqsBackend {
     /// Creates a new Azure Queue Storage builder with the given
     /// configuration.
     pub fn builder(cfg: impl Into<AqsConfig>) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(cfg.into())
     }
 }
