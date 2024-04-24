@@ -27,7 +27,11 @@
 // have generic return types. This is cleaner than the turbofish operator in my opinion.
 #![allow(clippy::let_unit_value)]
 
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{
+    marker::PhantomData,
+    sync::Arc,
+    time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
+};
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
@@ -361,7 +365,7 @@ async fn background_task_delayed<R: RedisConnection>(
     delayed_lock: &str,
     payload_key: &str,
 ) -> Result<()> {
-    let batch_size: isize = 50;
+    const BATCH_SIZE: isize = 50;
 
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -384,23 +388,14 @@ async fn background_task_delayed<R: RedisConnection>(
 
     if resp.as_deref() == Some("OK") {
         // First look for delayed keys whose time is up and add them to the main queue
-        let timestamp: i64 = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(QueueError::generic)?
-            .as_secs()
-            .try_into()
+        //
+        // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
+        // preventing premature delivery.
+        let timestamp = unix_timestamp(SystemTime::now() - Duration::from_secs(1))
             .map_err(QueueError::generic)?;
 
         let keys: Vec<RawPayload> = conn
-            .zrangebyscore_limit(
-                delayed_queue_name,
-                0isize,
-                // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
-                // preventing premature delivery.
-                timestamp - 1,
-                0isize,
-                batch_size,
-            )
+            .zrangebyscore_limit(delayed_queue_name, 0, timestamp, 0, BATCH_SIZE)
             .await
             .map_err(QueueError::generic)?;
 
@@ -617,12 +612,7 @@ impl<R: RedisConnection> RedisProducer<R> {
     }
 
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
-        let timestamp: i64 = (std::time::SystemTime::now() + delay)
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(QueueError::generic)?
-            .as_secs()
-            .try_into()
-            .map_err(QueueError::generic)?;
+        let timestamp = unix_timestamp(SystemTime::now() + delay).map_err(QueueError::generic)?;
 
         self.redis
             .get()
@@ -652,6 +642,10 @@ impl<R: RedisConnection> RedisProducer<R> {
 
 impl_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
 impl_scheduled_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
+
+fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
+    Ok(time.duration_since(UNIX_EPOCH)?.as_secs())
+}
 
 /// Acts as a payload prefix for when payloads are written to zset keys.
 ///
