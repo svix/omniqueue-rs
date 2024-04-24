@@ -7,6 +7,7 @@ use azure_storage_queues::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::Static, queue::Acker, Delivery, QueueBackend, QueueBuilder, QueueError, Result,
 };
@@ -38,6 +39,7 @@ impl AqsBackend {
     /// Creates a new Azure Queue Storage builder with the given
     /// configuration.
     pub fn builder(cfg: impl Into<AqsConfig>) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(cfg.into())
     }
 }
@@ -56,6 +58,7 @@ pub struct AqsConfig {
     pub receive_timeout: Option<Duration>,
 }
 
+#[allow(deprecated)]
 impl QueueBackend for AqsBackend {
     type Config = AqsConfig;
 

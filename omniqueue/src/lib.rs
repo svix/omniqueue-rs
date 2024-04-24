@@ -98,6 +98,7 @@ pub mod builder;
 mod queue;
 mod scheduled;
 
+#[allow(deprecated)]
 pub use self::{
     builder::QueueBuilder,
     queue::{Delivery, DynConsumer, DynProducer, QueueBackend, QueueConsumer, QueueProducer},

@@ -14,6 +14,7 @@ pub use lapin::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -44,6 +45,7 @@ pub struct RabbitMqBackend;
 impl RabbitMqBackend {
     /// Creates a new RabbitMQ queue builder with the given configuration.
     pub fn builder(config: RabbitMqConfig) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(config)
     }
 }
@@ -83,6 +85,7 @@ async fn producer(conn: &Connection, cfg: RabbitMqConfig) -> Result<RabbitMqProd
     })
 }
 
+#[allow(deprecated)]
 impl QueueBackend for RabbitMqBackend {
     type PayloadIn = Vec<u8>;
     type PayloadOut = Vec<u8>;

@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -15,10 +16,12 @@ pub struct InMemoryBackend;
 impl InMemoryBackend {
     /// Creates a new in-memory queue builder.
     pub fn builder() -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(())
     }
 }
 
+#[allow(deprecated)]
 impl QueueBackend for InMemoryBackend {
     type PayloadIn = Vec<u8>;
     type PayloadOut = Vec<u8>;
@@ -182,7 +185,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::InMemoryBackend;
-    use crate::{QueueBuilder, QueueProducer};
+    use crate::QueueProducer;
 
     #[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
     struct TypeA {
@@ -191,10 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn simple_queue_test() {
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         p.send_serde_json(&TypeA { a: 13 }).await.unwrap();
         assert_eq!(
@@ -228,10 +228,7 @@ mod tests {
     async fn test_send_recv_all_partial() {
         let payload = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         p.send_serde_json(&payload).await.unwrap();
         let deadline = Duration::from_secs(1);
@@ -252,10 +249,7 @@ mod tests {
         let payload1 = ExType { a: 1 };
         let payload2 = ExType { a: 2 };
 
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         p.send_serde_json(&payload1).await.unwrap();
         p.send_serde_json(&payload2).await.unwrap();
@@ -290,10 +284,7 @@ mod tests {
         let payload2 = ExType { a: 2 };
         let payload3 = ExType { a: 3 };
 
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         p.send_serde_json(&payload1).await.unwrap();
         p.send_serde_json(&payload2).await.unwrap();
@@ -334,10 +325,7 @@ mod tests {
     /// Consumer will NOT wait indefinitely for at least one item.
     #[tokio::test]
     async fn test_send_recv_all_late_arriving_items() {
-        let (_p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (_p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         let deadline = Duration::from_secs(1);
         let now = Instant::now();
@@ -354,10 +342,7 @@ mod tests {
     async fn test_scheduled() {
         let payload1 = ExType { a: 1 };
 
-        let (p, mut c) = QueueBuilder::<InMemoryBackend, _>::new(())
-            .build_pair()
-            .await
-            .unwrap();
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
 
         let delay = Duration::from_millis(100);
         let now = Instant::now();

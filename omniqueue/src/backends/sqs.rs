@@ -11,6 +11,7 @@ use aws_sdk_sqs::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -84,6 +85,7 @@ impl From<String> for SqsConfigFull {
 
 pub struct SqsBackend;
 
+#[allow(deprecated)]
 impl SqsBackend {
     /// Creates a new Amazon SQS queue builder with the given configuration.
     ///
@@ -92,19 +94,23 @@ impl SqsBackend {
         QueueBuilder::new(cfg.into())
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_pair() instead"]
     pub async fn new_pair(cfg: impl Into<SqsConfigFull>) -> Result<(SqsProducer, SqsConsumer)> {
         <Self as QueueBackend>::new_pair(cfg.into()).await
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_producer() instead"]
     pub async fn producing_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsProducer> {
         <Self as QueueBackend>::producing_half(cfg.into()).await
     }
 
+    #[deprecated = "Use SqsBackend::builder(cfg).build_consumer() instead"]
     pub async fn consuming_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsConsumer> {
         <Self as QueueBackend>::consuming_half(cfg.into()).await
     }
 }
 
+#[allow(deprecated)]
 impl QueueBackend for SqsBackend {
     type PayloadIn = String;
     type PayloadOut = String;

@@ -14,6 +14,7 @@ use google_cloud_pubsub::{
 };
 use serde::Serialize;
 
+#[allow(deprecated)]
 use crate::{
     builder::{QueueBuilder, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -26,6 +27,7 @@ impl GcpPubSubBackend {
     /// Creates a new Google Cloud Pub/Sub queue builder with the given
     /// configuration.
     pub fn builder(config: GcpPubSubConfig) -> QueueBuilder<Self, Static> {
+        #[allow(deprecated)]
         QueueBuilder::new(config)
     }
 }
@@ -75,6 +77,7 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
     Client::new(config).await.map_err(QueueError::generic)
 }
 
+#[allow(deprecated)]
 impl QueueBackend for GcpPubSubBackend {
     type Config = GcpPubSubConfig;
 

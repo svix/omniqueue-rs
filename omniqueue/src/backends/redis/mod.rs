@@ -47,6 +47,7 @@ use svix_ksuid::KsuidLike;
 use tokio::task::JoinSet;
 use tracing::{debug, error, trace, warn};
 
+#[allow(deprecated)]
 use crate::{
     builder::{Dynamic, Static},
     queue::{Acker, Delivery, QueueBackend},
@@ -122,6 +123,7 @@ impl RedisBackend {
     }
 }
 
+#[allow(deprecated)]
 impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     // FIXME: Is it possible to use the types Redis actually uses?
     type PayloadIn = RawPayload;
@@ -330,16 +332,19 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
 
 impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
     pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
+        #[allow(deprecated)]
         let (p, c) = RedisBackend::<R>::new_pair(self.config).await?;
         Ok((p.into_dyn(), c.into_dyn()))
     }
 
     pub async fn build_producer(self) -> Result<DynProducer> {
+        #[allow(deprecated)]
         let p = RedisBackend::<R>::producing_half(self.config).await?;
         Ok(p.into_dyn())
     }
 
     pub async fn build_consumer(self) -> Result<DynConsumer> {
+        #[allow(deprecated)]
         let c = RedisBackend::<R>::consuming_half(self.config).await?;
         Ok(c.into_dyn())
     }
