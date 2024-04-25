@@ -44,6 +44,7 @@ use redis::{
 };
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
+use thiserror::Error;
 use tokio::task::JoinSet;
 use tracing::{debug, error, trace, warn};
 
@@ -87,6 +88,49 @@ impl RedisConnection for RedisClusterConnectionManager {
 
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
+    }
+}
+
+#[derive(Debug, Error)]
+enum EvictionCheckError {
+    #[error("Unable to verify eviction policy. Ensure `maxmemory-policy` set to `noeviction` or `volatile-*`")]
+    CheckEvictionPolicyFailed,
+    #[error("Unsafe eviction policy found. Your queue is at risk of data loss. Please ensure `maxmemory-policy` set to `noeviction` or `volatile-*`")]
+    UnsafeEvictionPolicy,
+}
+
+async fn check_eviction_policy<R: RedisConnection>(
+    pool: bb8::Pool<R>,
+) -> std::result::Result<(), EvictionCheckError> {
+    let mut conn = pool
+        .get()
+        .await
+        .map_err(|_| EvictionCheckError::CheckEvictionPolicyFailed)?;
+
+    let results: Vec<String> = redis::cmd("CONFIG")
+        .arg("GET")
+        .arg("maxmemory-policy")
+        .query_async::<<R as RedisConnection>::Connection, Vec<String>>(&mut *conn)
+        .await
+        .map_err(|_| EvictionCheckError::CheckEvictionPolicyFailed)?;
+
+    let eviction_policy = results
+        .get(1)
+        .ok_or(EvictionCheckError::CheckEvictionPolicyFailed)?;
+
+    if [
+        "noeviction",
+        "volatile-lru",
+        "volatile-lfu",
+        "volatile-random",
+        "volatile-ttl",
+    ]
+    .contains(&eviction_policy.as_str())
+    {
+        tracing::debug!("Eviction policy `{eviction_policy}` found");
+        Ok(())
+    } else {
+        Err(EvictionCheckError::UnsafeEvictionPolicy)
     }
 }
 
@@ -323,6 +367,15 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                         continue;
                     }
                 }
+            }
+        });
+
+        join_set.spawn({
+            async move {
+                if let Err(e) = check_eviction_policy(redis.clone()).await {
+                    tracing::warn!("{e}");
+                }
+                Ok(())
             }
         });
 
