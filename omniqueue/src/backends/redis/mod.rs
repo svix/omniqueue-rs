@@ -37,7 +37,7 @@ use std::{
 
 use async_trait::async_trait;
 use bb8::ManageConnection;
-pub use bb8_redis::RedisMultiplexedConnectionManager;
+pub use bb8_redis::RedisConnectionManager;
 use redis::{
     streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
     AsyncCommands, ExistenceCheck, FromRedisValue, RedisResult, SetExpiry, SetOptions,
@@ -71,7 +71,7 @@ pub trait RedisConnection:
     fn from_dsn(dsn: &str) -> Result<Self>;
 }
 
-impl RedisConnection for RedisMultiplexedConnectionManager {
+impl RedisConnection for RedisConnectionManager {
     type Connection = <Self as ManageConnection>::Connection;
     type Error = <Self as ManageConnection>::Error;
 
@@ -103,7 +103,7 @@ pub struct RedisConfig {
     pub ack_deadline_ms: i64,
 }
 
-pub struct RedisBackend<R = RedisMultiplexedConnectionManager>(PhantomData<R>);
+pub struct RedisBackend<R = RedisConnectionManager>(PhantomData<R>);
 
 #[cfg(feature = "redis_cluster")]
 pub type RedisClusterBackend = RedisBackend<RedisClusterConnectionManager>;
@@ -147,7 +147,7 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     }
 }
 
-pub struct RedisBackendBuilder<R = RedisMultiplexedConnectionManager, S = Static> {
+pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
     config: RedisConfig,
     _phantom: PhantomData<fn() -> (R, S)>,
 }
