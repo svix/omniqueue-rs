@@ -640,7 +640,7 @@ pub struct RedisProducer<M: ManageConnection> {
 }
 
 impl<R: RedisConnection> RedisProducer<R> {
-    pub async fn send_raw(&self, payload: &Vec<u8>) -> Result<()> {
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.redis
             .get()
             .await
