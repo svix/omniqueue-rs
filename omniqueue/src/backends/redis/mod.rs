@@ -1,4 +1,7 @@
-//! Redis stream-based queue implementation
+//! Redis queue implementation.
+//!
+//! By default, this uses redis streams. There is a fallback implementation that
+//! you can select via `RedisBackend::builder(cfg).use_redis_streams(false)`.
 //!
 //! # Redis Streams in Brief
 //!
@@ -31,6 +34,7 @@
 
 use std::{
     marker::PhantomData,
+    str,
     sync::Arc,
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
@@ -53,6 +57,7 @@ use crate::{
 
 #[cfg(feature = "redis_cluster")]
 mod cluster;
+mod fallback;
 mod streams;
 
 #[cfg(feature = "redis_cluster")]
@@ -191,6 +196,7 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
 
 pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
     config: RedisConfig,
+    use_redis_streams: bool,
     _phantom: PhantomData<fn() -> (R, S)>,
 }
 
@@ -201,6 +207,15 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     fn new(config: RedisConfig) -> Self {
         Self {
             config,
+            use_redis_streams: true,
+            _phantom: PhantomData,
+        }
+    }
+
+    fn map_phantom<R2, S2>(self) -> RedisBackendBuilder<R2, S2> {
+        RedisBackendBuilder {
+            config: self.config,
+            use_redis_streams: self.use_redis_streams,
             _phantom: PhantomData,
         }
     }
@@ -211,15 +226,27 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     /// manager implementation. For clustered redis, use
     /// [`.cluster()`][Self::cluster].
     pub fn connection_manager<R2>(self) -> RedisBackendBuilder<R2> {
-        RedisBackendBuilder {
-            config: self.config,
-            _phantom: PhantomData,
-        }
+        self.map_phantom()
     }
 
     #[cfg(feature = "redis_cluster")]
     pub fn cluster(self) -> RedisBackendBuilder<RedisClusterConnectionManager> {
         self.connection_manager()
+    }
+
+    /// Whether to use redis streams.
+    ///
+    /// Default: `true`.\
+    /// Set this to `false` if you want to use this backend with a version of
+    /// redis older than 6.2.0.
+    ///
+    /// Note: Make sure this setting matches between producers and consumers,
+    /// and don't change it as part of an upgrade unless you have made sure to
+    /// either empty the previous data, migrate it yourself or use different
+    /// queue keys.
+    pub fn use_redis_streams(mut self, value: bool) -> Self {
+        self.use_redis_streams = value;
+        self
     }
 
     pub async fn build_pair(self) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
@@ -231,6 +258,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             .map_err(QueueError::generic)?;
 
         let background_tasks = self.start_background_tasks(redis.clone()).await;
+        let processing_queue_key = format!("{}_processing", self.config.queue_key);
 
         Ok((
             RedisProducer {
@@ -238,14 +266,17 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 queue_key: self.config.queue_key.clone(),
                 delayed_queue_key: self.config.delayed_queue_key,
                 payload_key: self.config.payload_key.clone(),
+                use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
             },
             RedisConsumer {
                 redis,
                 queue_key: self.config.queue_key,
+                processing_queue_key,
                 consumer_group: self.config.consumer_group,
                 consumer_name: self.config.consumer_name,
                 payload_key: self.config.payload_key,
+                use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
             },
         ))
@@ -265,6 +296,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             queue_key: self.config.queue_key,
             delayed_queue_key: self.config.delayed_queue_key,
             payload_key: self.config.payload_key,
+            use_redis_streams: self.use_redis_streams,
             _background_tasks,
         })
     }
@@ -278,22 +310,22 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             .map_err(QueueError::generic)?;
 
         let _background_tasks = self.start_background_tasks(redis.clone()).await;
+        let processing_queue_key = format!("{}_processing", self.config.queue_key);
 
         Ok(RedisConsumer {
             redis,
             queue_key: self.config.queue_key,
+            processing_queue_key,
             consumer_group: self.config.consumer_group,
             consumer_name: self.config.consumer_name,
             payload_key: self.config.payload_key,
+            use_redis_streams: self.use_redis_streams,
             _background_tasks,
         })
     }
 
     pub fn make_dynamic(self) -> RedisBackendBuilder<R, Dynamic> {
-        RedisBackendBuilder {
-            config: self.config,
-            _phantom: PhantomData,
-        }
+        self.map_phantom()
     }
 
     // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way to
@@ -315,6 +347,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 let delayed_queue_key = self.config.delayed_queue_key.to_owned();
                 let delayed_lock_key = self.config.delayed_lock_key.to_owned();
                 let payload_key = self.config.payload_key.to_owned();
+                let use_redis_streams = self.use_redis_streams;
 
                 #[rustfmt::skip]
                 debug!(
@@ -330,6 +363,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                             &delayed_queue_key,
                             &delayed_lock_key,
                             &payload_key,
+                            use_redis_streams,
                         )
                         .await
                         {
@@ -342,13 +376,22 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             });
         }
 
-        join_set.spawn(streams::background_task_pending(
-            redis.clone(),
-            self.config.queue_key.to_owned(),
-            self.config.consumer_group.to_owned(),
-            self.config.consumer_name.to_owned(),
-            self.config.ack_deadline_ms,
-        ));
+        if self.use_redis_streams {
+            join_set.spawn(streams::background_task_pending(
+                redis.clone(),
+                self.config.queue_key.to_owned(),
+                self.config.consumer_group.to_owned(),
+                self.config.consumer_name.to_owned(),
+                self.config.ack_deadline_ms,
+            ));
+        } else {
+            join_set.spawn(fallback::background_task_processing(
+                redis.clone(),
+                self.config.queue_key.to_owned(),
+                format!("{}_processing", self.config.queue_key),
+                self.config.ack_deadline_ms,
+            ));
+        }
 
         join_set.spawn({
             async move {
@@ -391,6 +434,7 @@ async fn background_task_delayed<R: RedisConnection>(
     delayed_queue_name: &str,
     delayed_lock: &str,
     payload_key: &str,
+    use_redis_streams: bool,
 ) -> Result<()> {
     const BATCH_SIZE: isize = 50;
 
@@ -429,7 +473,11 @@ async fn background_task_delayed<R: RedisConnection>(
         if !keys.is_empty() {
             trace!("Moving {} messages from delayed to main queue", keys.len());
 
-            streams::add_to_main_queue(&keys, main_queue_name, payload_key, &mut *conn).await?;
+            if use_redis_streams {
+                streams::add_to_main_queue(&keys, main_queue_name, payload_key, &mut *conn).await?;
+            } else {
+                fallback::add_to_main_queue(&keys, main_queue_name, &mut *conn).await?;
+            }
 
             // Then remove the tasks from the delayed queue so they aren't resent
             let _: () = conn
@@ -459,12 +507,17 @@ pub struct RedisProducer<M: ManageConnection> {
     queue_key: String,
     delayed_queue_key: String,
     payload_key: String,
+    use_redis_streams: bool,
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
 impl<R: RedisConnection> RedisProducer<R> {
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
-        streams::send_raw(self, payload).await
+        if self.use_redis_streams {
+            streams::send_raw(self, payload).await
+        } else {
+            fallback::send_raw(self, payload).await
+        }
     }
 
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
@@ -479,11 +532,7 @@ impl<R: RedisConnection> RedisProducer<R> {
             .get()
             .await
             .map_err(QueueError::generic)?
-            .zadd(
-                &self.delayed_queue_key,
-                to_delayed_queue_key(payload),
-                timestamp,
-            )
+            .zadd(&self.delayed_queue_key, to_key(payload), timestamp)
             .await
             .map_err(QueueError::generic)?;
 
@@ -513,44 +562,53 @@ fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
 /// This ensures that messages with identical payloads:
 /// - don't only get delivered once instead of N times.
 /// - don't replace each other's "delivery due" timestamp.
-fn delayed_key_id() -> RawPayload {
-    svix_ksuid::Ksuid::new(None, None).to_base62().into_bytes()
+fn delayed_key_id() -> String {
+    svix_ksuid::Ksuid::new(None, None).to_base62()
 }
 
 /// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_delayed_queue_key(payload: &[u8]) -> RawPayload {
-    // Base62-encoded KSUID is always 27 bytes long, 1 byte for separator.
-    let mut result = Vec::with_capacity(payload.len() + 28);
+fn to_key(payload: &[u8]) -> RawPayload {
+    let id = delayed_key_id();
 
-    result.extend(delayed_key_id());
+    let mut result = Vec::with_capacity(id.len() + payload.len() + 1);
+    result.extend(id.as_bytes());
     result.push(b'|');
-    result.extend(payload.iter().copied());
+    result.extend(payload);
     result
 }
 
-/// Returns the payload portion of a delayed zset key.
-fn from_delayed_queue_key(key: &[u8]) -> Result<&[u8]> {
+/// Splits a key encoded with [`to_key`] into ID and payload.
+fn from_key(key: &[u8]) -> Result<(&str, &[u8])> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
     let sep_pos = key
         .iter()
         .position(|&byte| byte == b'|')
         .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    Ok(&key[sep_pos + 1..])
+    let id = str::from_utf8(&key[..sep_pos])
+        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
+
+    Ok((id, &key[sep_pos + 1..]))
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
     redis: bb8::Pool<M>,
     queue_key: String,
+    processing_queue_key: String,
     consumer_group: String,
     consumer_name: String,
     payload_key: String,
+    use_redis_streams: bool,
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 
 impl<R: RedisConnection> RedisConsumer<R> {
     pub async fn receive(&mut self) -> Result<Delivery> {
-        streams::receive(self).await
+        if self.use_redis_streams {
+            streams::receive(self).await
+        } else {
+            fallback::receive(self).await
+        }
     }
 
     pub async fn receive_all(
@@ -558,7 +616,11 @@ impl<R: RedisConnection> RedisConsumer<R> {
         max_messages: usize,
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
-        streams::receive_all(self, deadline, max_messages).await
+        if self.use_redis_streams {
+            streams::receive_all(self, deadline, max_messages).await
+        } else {
+            fallback::receive_all(self, deadline, max_messages).await
+        }
     }
 }
 

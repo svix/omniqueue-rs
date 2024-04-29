@@ -10,7 +10,7 @@ use redis::{
 };
 use tracing::{error, trace};
 
-use super::{from_delayed_queue_key, RedisConnection, RedisConsumer, RedisProducer};
+use super::{from_key, RedisConnection, RedisConsumer, RedisProducer};
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
 /// Special ID for XADD command's which generates a stream ID automatically
@@ -173,7 +173,7 @@ pub(super) async fn add_to_main_queue(
 ) -> Result<()> {
     let mut pipe = redis::pipe();
     for key in keys {
-        let payload = from_delayed_queue_key(key)?;
+        let (_, payload) = from_key(key)?;
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
