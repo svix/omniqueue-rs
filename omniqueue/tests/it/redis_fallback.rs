@@ -1,13 +1,13 @@
 use std::time::{Duration, Instant};
 
 use omniqueue::backends::{redis::RedisBackendBuilder, RedisBackend, RedisConfig};
-use redis::{AsyncCommands, Client, Commands};
+use redis::{Client, Commands};
 use serde::{Deserialize, Serialize};
 
 const ROOT_URL: &str = "redis://localhost";
 
-pub struct RedisStreamDrop(String);
-impl Drop for RedisStreamDrop {
+pub struct RedisKeyDrop(String);
+impl Drop for RedisKeyDrop {
     fn drop(&mut self) {
         let client = Client::open(ROOT_URL).unwrap();
         let mut conn = client.get_connection().unwrap();
@@ -22,35 +22,30 @@ impl Drop for RedisStreamDrop {
 /// Additionally this will make a temporary stream on that instance for the
 /// duration of the test such as to ensure there is no stealing
 ///
-/// This will also return a [`RedisStreamDrop`] to clean up the stream after the
+/// This will also return a [`RedisKeyDrop`] to clean up the stream after the
 /// test ends.
-async fn make_test_queue() -> (RedisBackendBuilder, RedisStreamDrop) {
-    let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
+async fn make_test_queue() -> (RedisBackendBuilder, RedisKeyDrop) {
+    let queue_key: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
-
-    let client = Client::open(ROOT_URL).unwrap();
-    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
-
-    let _: () = conn
-        .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
-        .await
-        .unwrap();
 
     let config = RedisConfig {
         dsn: ROOT_URL.to_owned(),
         max_connections: 8,
         reinsert_on_nack: false,
-        queue_key: stream_name.clone(),
-        delayed_queue_key: format!("{stream_name}::delayed"),
-        delayed_lock_key: format!("{stream_name}::delayed_lock"),
+        queue_key: queue_key.clone(),
+        delayed_queue_key: format!("{queue_key}::delayed"),
+        delayed_lock_key: format!("{queue_key}::delayed_lock"),
         consumer_group: "test_cg".to_owned(),
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 5_000,
     };
 
-    (RedisBackend::builder(config), RedisStreamDrop(stream_name))
+    (
+        RedisBackend::builder(config).use_redis_streams(false),
+        RedisKeyDrop(queue_key),
+    )
 }
 
 #[tokio::test]
@@ -98,6 +93,9 @@ async fn test_serde_send_recv() {
     d.ack().await.unwrap();
 }
 
+// Fallback implementation currently implements receive_all such that it always
+// only returns the first item, uncomment when the implementation is changed.
+/*
 /// Consumer will return immediately if there are fewer than max messages to
 /// start with.
 #[tokio::test]
@@ -220,6 +218,7 @@ async fn test_send_recv_all_late_arriving_items() {
     assert!(elapsed >= deadline);
     assert!(elapsed <= deadline + Duration::from_millis(200));
 }
+*/
 
 #[tokio::test]
 async fn test_scheduled() {
