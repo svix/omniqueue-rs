@@ -8,5 +8,7 @@ mod rabbitmq;
 mod redis;
 #[cfg(feature = "redis_cluster")]
 mod redis_cluster;
+#[cfg(feature = "redis")]
+mod redis_fallback;
 #[cfg(feature = "sqs")]
 mod sqs;
