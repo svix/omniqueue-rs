@@ -8,7 +8,7 @@ macro_rules! impl_queue_consumer {
             type Payload = $payload;
 
             fn receive(&mut self) -> impl std::future::Future<Output = Result<Delivery>> + Send {
-                self.receive()
+                $ident::receive(self)
             }
 
             fn receive_all(
@@ -16,7 +16,7 @@ macro_rules! impl_queue_consumer {
                 max_messages: usize,
                 deadline: Duration,
             ) -> impl std::future::Future<Output = Result<Vec<Delivery>>> + Send {
-                self.receive_all(max_messages, deadline)
+                $ident::receive_all(self, max_messages, deadline)
             }
         }
     };
@@ -35,14 +35,14 @@ macro_rules! impl_queue_producer {
                 &self,
                 payload: &Self::Payload,
             ) -> impl std::future::Future<Output = Result<()>> + Send {
-                self.send_raw(payload)
+                $ident::send_raw(self, payload)
             }
 
             fn send_serde_json<P: serde::Serialize + Sync>(
                 &self,
                 payload: &P,
             ) -> impl std::future::Future<Output = Result<()>> + Send {
-                self.send_serde_json(payload)
+                $ident::send_serde_json(self, payload)
             }
         }
     };
@@ -60,7 +60,7 @@ macro_rules! impl_scheduled_queue_producer {
                 payload: &Self::Payload,
                 delay: Duration,
             ) -> impl std::future::Future<Output = Result<()>> + Send {
-                self.send_raw_scheduled(payload, delay)
+                $ident::send_raw_scheduled(self, payload, delay)
             }
 
             fn send_serde_json_scheduled<P: serde::Serialize + Sync>(
@@ -68,7 +68,7 @@ macro_rules! impl_scheduled_queue_producer {
                 payload: &P,
                 delay: Duration,
             ) -> impl std::future::Future<Output = Result<()>> + Send {
-                self.send_serde_json_scheduled(payload, delay)
+                $ident::send_serde_json_scheduled(self, payload, delay)
             }
         }
     };
