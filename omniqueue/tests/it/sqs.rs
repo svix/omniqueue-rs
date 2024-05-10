@@ -50,7 +50,7 @@ async fn make_test_queue() -> QueueBuilder<SqsBackend> {
 #[tokio::test]
 async fn test_raw_send_recv() {
     let payload = "{\"test\": \"data\"}";
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_raw(payload).await.unwrap();
 
@@ -63,7 +63,7 @@ async fn test_bytes_send_recv() {
     use omniqueue::QueueProducer as _;
 
     let payload = b"hello";
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_bytes(payload).await.unwrap();
 
@@ -80,7 +80,7 @@ pub struct ExType {
 #[tokio::test]
 async fn test_serde_send_recv() {
     let payload = ExType { a: 2 };
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -94,7 +94,7 @@ async fn test_serde_send_recv() {
 #[tokio::test]
 async fn test_send_recv_all_partial() {
     let payload = ExType { a: 2 };
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
     let deadline = Duration::from_secs(1);
@@ -114,7 +114,7 @@ async fn test_send_recv_all_partial() {
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
@@ -148,7 +148,7 @@ async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
     let payload3 = ExType { a: 3 };
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
@@ -189,7 +189,7 @@ async fn test_send_recv_all_full_then_partial() {
 /// Consumer will NOT wait indefinitely for at least one item.
 #[tokio::test]
 async fn test_send_recv_all_late_arriving_items() {
-    let (_p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (_p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     let deadline = Duration::from_secs(1);
     let now = Instant::now();
@@ -205,7 +205,7 @@ async fn test_send_recv_all_late_arriving_items() {
 #[tokio::test]
 async fn test_scheduled() {
     let payload1 = ExType { a: 1 };
-    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue().await.build_pair().await.unwrap();
 
     let delay = Duration::from_secs(3);
     let now = Instant::now();
