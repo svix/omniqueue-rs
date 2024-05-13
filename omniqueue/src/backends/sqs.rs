@@ -291,7 +291,7 @@ impl SqsConsumer {
         }
     }
 
-    pub async fn receive(&mut self) -> Result<Delivery> {
+    pub async fn receive(&self) -> Result<Delivery> {
         let out = self
             .client
             .receive_message()
@@ -309,7 +309,7 @@ impl SqsConsumer {
     }
 
     pub async fn receive_all(
-        &mut self,
+        &self,
         max_messages: usize,
         deadline: Duration,
     ) -> Result<Vec<Delivery>> {
