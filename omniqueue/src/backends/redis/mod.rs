@@ -533,6 +533,11 @@ pub struct RedisProducer<M: ManageConnection> {
 }
 
 impl<R: RedisConnection> RedisProducer<R> {
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len())
+    )]
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         if self.use_redis_streams {
             streams::send_raw(self, payload).await
@@ -546,6 +551,11 @@ impl<R: RedisConnection> RedisProducer<R> {
         self.send_raw(&payload).await
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len(), delay)
+    )]
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let timestamp = unix_timestamp(SystemTime::now() + delay).map_err(QueueError::generic)?;
 

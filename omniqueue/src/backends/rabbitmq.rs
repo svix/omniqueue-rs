@@ -164,6 +164,11 @@ impl RabbitMqProducer {
         Ok(())
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len())
+    )]
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.send_raw_with_headers(payload, None).await
     }
@@ -173,6 +178,11 @@ impl RabbitMqProducer {
         self.send_raw(&payload).await
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len(), delay)
+    )]
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let mut headers = FieldTable::default();
 

@@ -126,6 +126,11 @@ impl GcpPubSubProducer {
         })
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len())
+    )]
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         let msg = PubsubMessage {
             data: payload.to_vec(),
