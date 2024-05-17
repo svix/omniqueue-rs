@@ -240,6 +240,14 @@ impl SqsProducer {
         self.send_raw(&payload).await
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(
+            payload_size = payload.len(),
+            delay = (delay > Duration::ZERO).then(|| tracing::field::debug(delay))
+        )
+    )]
     pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         if payload.len() > MAX_PAYLOAD_SIZE {
             return Err(QueueError::PayloadTooLarge {

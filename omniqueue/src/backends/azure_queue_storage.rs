@@ -103,6 +103,14 @@ impl AqsProducer {
         self.send_raw_scheduled(payload, Duration::ZERO).await
     }
 
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(
+            payload_size = payload.len(),
+            delay = (delay > Duration::ZERO).then(|| tracing::field::debug(delay))
+        )
+    )]
     pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
         self.client
             .put_message(payload)
