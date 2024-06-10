@@ -34,20 +34,22 @@ pub struct SqsConfig {
 pub struct SqsConfigFull {
     queue_dsn: String,
     override_endpoint: bool,
-    aws_config: Option<aws_config::SdkConfig>,
+    sqs_config: Option<aws_sdk_sqs::Config>,
 }
 
 impl SqsConfigFull {
-    async fn take_aws_config(&mut self) -> aws_config::SdkConfig {
-        if let Some(cfg) = self.aws_config.take() {
+    async fn take_sqs_config(&mut self) -> aws_sdk_sqs::Config {
+        if let Some(cfg) = self.sqs_config.take() {
             cfg
         } else if self.override_endpoint {
-            aws_config::from_env()
-                .endpoint_url(&self.queue_dsn)
-                .load()
-                .await
+            aws_sdk_sqs::Config::from(
+                &aws_config::from_env()
+                    .endpoint_url(&self.queue_dsn)
+                    .load()
+                    .await,
+            )
         } else {
-            aws_config::load_from_env().await
+            aws_sdk_sqs::Config::from(&aws_config::load_from_env().await)
         }
     }
 }
@@ -62,7 +64,7 @@ impl From<SqsConfig> for SqsConfigFull {
         Self {
             queue_dsn,
             override_endpoint,
-            aws_config: None,
+            sqs_config: None,
         }
     }
 }
@@ -78,7 +80,7 @@ impl From<String> for SqsConfigFull {
         Self {
             queue_dsn: dsn,
             override_endpoint: false,
-            aws_config: None,
+            sqs_config: None,
         }
     }
 }
@@ -121,8 +123,8 @@ impl QueueBackend for SqsBackend {
     type Config = SqsConfigFull;
 
     async fn new_pair(mut cfg: SqsConfigFull) -> Result<(SqsProducer, SqsConsumer)> {
-        let aws_cfg = cfg.take_aws_config().await;
-        let client = Client::new(&aws_cfg);
+        let aws_cfg = cfg.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
 
         let producer = SqsProducer {
             client: client.clone(),
@@ -138,8 +140,8 @@ impl QueueBackend for SqsBackend {
     }
 
     async fn producing_half(mut cfg: SqsConfigFull) -> Result<SqsProducer> {
-        let aws_cfg = cfg.take_aws_config().await;
-        let client = Client::new(&aws_cfg);
+        let aws_cfg = cfg.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
 
         let producer = SqsProducer {
             client,
@@ -150,8 +152,8 @@ impl QueueBackend for SqsBackend {
     }
 
     async fn consuming_half(mut cfg: SqsConfigFull) -> Result<SqsConsumer> {
-        let aws_cfg = cfg.take_aws_config().await;
-        let client = Client::new(&aws_cfg);
+        let aws_cfg = cfg.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
 
         let consumer = SqsConsumer {
             client,
@@ -163,12 +165,12 @@ impl QueueBackend for SqsBackend {
 }
 
 impl QueueBuilder<SqsBackend> {
-    /// Set the AWS configuration to use.
+    /// Set the SQS configuration to use.
     ///
-    /// If you _don't_ call this method, the AWS configuration will be loaded
+    /// If you _don't_ call this method, the SQS configuration will be loaded
     /// from the process environment, via [`aws_config::load_from_env`].
-    pub fn aws_config(mut self, value: aws_config::SdkConfig) -> Self {
-        self.config.aws_config = Some(value);
+    pub fn sqs_config(mut self, value: aws_sdk_sqs::Config) -> Self {
+        self.config.sqs_config = Some(value);
         self
     }
 
