@@ -65,20 +65,14 @@ pub use cluster::RedisClusterConnectionManager;
 
 pub trait RedisConnection:
     ManageConnection<
-    Connection = <Self as RedisConnection>::Connection,
-    Error = <Self as RedisConnection>::Error,
+    Connection: redis::aio::ConnectionLike + Send + Sync,
+    Error: std::error::Error + Send + Sync + 'static,
 >
 {
-    type Connection: redis::aio::ConnectionLike + Send + Sync;
-    type Error: std::error::Error + Send + Sync + 'static;
-
     fn from_dsn(dsn: &str) -> Result<Self>;
 }
 
 impl RedisConnection for RedisConnectionManager {
-    type Connection = <Self as ManageConnection>::Connection;
-    type Error = <Self as ManageConnection>::Error;
-
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
@@ -86,9 +80,6 @@ impl RedisConnection for RedisConnectionManager {
 
 #[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
-    type Connection = <Self as ManageConnection>::Connection;
-    type Error = <Self as ManageConnection>::Error;
-
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
     }
@@ -113,7 +104,7 @@ async fn check_eviction_policy<R: RedisConnection>(
     let results: Vec<String> = redis::cmd("CONFIG")
         .arg("GET")
         .arg("maxmemory-policy")
-        .query_async::<<R as RedisConnection>::Connection, Vec<String>>(&mut *conn)
+        .query_async::<R::Connection, Vec<String>>(&mut *conn)
         .await
         .map_err(|_| EvictionCheckError::CheckEvictionPolicyFailed)?;
 
