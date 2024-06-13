@@ -4,6 +4,7 @@
 
 - Remove `QueueError::Unsupported`
   - This variant was never constructed inside `omniqueue`
+- Rename `aws_config` to `sqs_config` and use `aws_sdk_sqs::Config`
 
 ## Additions
 
