@@ -225,6 +225,34 @@ impl Acker for SqsAcker {
     async fn nack(&mut self) -> Result<()> {
         Ok(())
     }
+
+    async fn set_ack_deadline(&mut self, duration: Duration) -> Result<()> {
+        if let Some(receipt_handle) = &self.receipt_handle {
+            let duration_secs = duration.as_secs().try_into().map_err(|e| {
+                QueueError::Generic(Box::<dyn std::error::Error + Send + Sync>::from(format!(
+                    "set_ack_deadline duration {duration:?} is too large: {e:?}"
+                )))
+            })?;
+            self.ack_client
+                .change_message_visibility()
+                .set_visibility_timeout(Some(duration_secs))
+                .queue_url(&self.queue_dsn)
+                .receipt_handle(receipt_handle)
+                .send()
+                .await
+                .map_err(aws_to_queue_error)?;
+
+            Ok(())
+        } else {
+            Err(QueueError::generic(
+                DeleteMessageError::ReceiptHandleIsInvalid(
+                    ReceiptHandleIsInvalid::builder()
+                        .message("receipt handle must be Some to set ack deadline")
+                        .build(),
+                ),
+            ))
+        }
+    }
 }
 
 pub struct SqsProducer {

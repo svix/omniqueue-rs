@@ -163,6 +163,12 @@ impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
 
         Ok(())
     }
+
+    async fn set_ack_deadline(&mut self, _duration: Duration) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "set_ack_deadline is not yet supported by redis streams backend",
+        ))
+    }
 }
 
 pub(super) async fn add_to_main_queue(

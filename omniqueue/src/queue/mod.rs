@@ -1,4 +1,4 @@
-use std::{fmt, future::Future};
+use std::{fmt, future::Future, time::Duration};
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
@@ -59,6 +59,19 @@ impl Delivery {
         self.acker.ack().await.map_err(|e| (e, self))
     }
 
+    #[cfg(feature = "beta")]
+    /// Sets the deadline for acknowledging this [`Delivery`] to `duration`,
+    /// starting from the time this method is called.
+    ///
+    /// The exact nature of this will vary per backend, but usually ensures
+    /// that the same message will not be reprocessed if `ack()` is called
+    /// within an interval of `duration` from the time this method is
+    /// called. For example, this corresponds to the 'visibility timeout' in
+    /// SQS, and the 'ack deadline' in GCP
+    pub async fn set_ack_deadline(&mut self, duration: Duration) -> Result<(), QueueError> {
+        self.acker.set_ack_deadline(duration).await
+    }
+
     /// Explicitly does not Acknowledge the successful processing of this
     /// [`Delivery`].
     ///
@@ -102,4 +115,6 @@ impl fmt::Debug for Delivery {
 pub(crate) trait Acker: Send + Sync {
     async fn ack(&mut self) -> Result<()>;
     async fn nack(&mut self) -> Result<()>;
+    #[cfg_attr(not(feature = "beta"), allow(dead_code))]
+    async fn set_ack_deadline(&mut self, duration: Duration) -> Result<()>;
 }
