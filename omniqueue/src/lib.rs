@@ -134,6 +134,9 @@ pub enum QueueError {
 
     #[error("{0}")]
     Generic(Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("{0}")]
+    Unsupported(&'static str),
 }
 
 impl QueueError {

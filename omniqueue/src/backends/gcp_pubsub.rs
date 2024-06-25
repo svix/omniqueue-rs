@@ -281,4 +281,17 @@ impl Acker for GcpPubSubAcker {
     async fn nack(&mut self) -> Result<()> {
         self.recv_msg.nack().await.map_err(QueueError::generic)
     }
+
+    async fn set_ack_deadline(&mut self, duration: Duration) -> Result<()> {
+        let duration_secs = duration.as_secs().try_into().map_err(|e| {
+            QueueError::Generic(Box::<dyn std::error::Error + Send + Sync>::from(format!(
+                "set_ack_deadline duration {duration:?} is too large: {e:?}"
+            )))
+        })?;
+
+        self.recv_msg
+            .modify_ack_deadline(duration_secs)
+            .await
+            .map_err(QueueError::generic)
+    }
 }

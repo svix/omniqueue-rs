@@ -170,6 +170,12 @@ impl Acker for AqsAcker {
     async fn nack(&mut self) -> Result<()> {
         Ok(())
     }
+
+    async fn set_ack_deadline(&mut self, _duration: Duration) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "set_ack_deadline is not yet supported by InMemoryBackend",
+        ))
+    }
 }
 
 impl AqsConsumer {

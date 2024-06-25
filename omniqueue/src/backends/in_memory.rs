@@ -176,6 +176,12 @@ impl Acker for InMemoryAcker {
                 .map_err(QueueError::generic)
         }
     }
+
+    async fn set_ack_deadline(&mut self, _duration: Duration) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "set_ack_deadline is not yet supported by InMemoryBackend",
+        ))
+    }
 }
 
 #[cfg(test)]
