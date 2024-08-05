@@ -550,7 +550,8 @@ impl<R: RedisConnection> RedisProducer<R> {
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let timestamp = unix_timestamp(SystemTime::now() + delay).map_err(QueueError::generic)?;
 
-        self.redis
+        let _: () = self
+            .redis
             .get()
             .await
             .map_err(QueueError::generic)?
