@@ -90,4 +90,8 @@ impl DynConsumer {
 
 impl_queue_consumer!(for DynConsumer {
     type Payload = Vec<u8>;
+
+    fn into_dyn(self) -> DynConsumer {
+        self
+    }
 });
