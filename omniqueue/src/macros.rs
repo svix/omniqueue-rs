@@ -2,6 +2,7 @@ macro_rules! impl_queue_consumer {
     (
         for $ident:ident $( <$ty:ident: $tr:path> )? {
             type Payload = $payload:ty;
+            $($extra:tt)*
         }
     ) => {
         #[deny(unconditional_recursion)] // method calls must defer to inherent methods
@@ -19,6 +20,8 @@ macro_rules! impl_queue_consumer {
             ) -> impl std::future::Future<Output = Result<Vec<Delivery>>> + Send {
                 $ident::receive_all(self, max_messages, deadline)
             }
+
+            $($extra)*
         }
     };
 }
