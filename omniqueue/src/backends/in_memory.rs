@@ -143,7 +143,9 @@ impl InMemoryConsumer {
     }
 }
 
-impl_queue_consumer!(InMemoryConsumer, Vec<u8>);
+impl_queue_consumer!(for InMemoryConsumer {
+    type Payload = Vec<u8>;
+});
 
 struct InMemoryAcker {
     tx: mpsc::UnboundedSender<Vec<u8>>,

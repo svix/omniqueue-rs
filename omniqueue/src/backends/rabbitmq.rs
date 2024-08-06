@@ -270,7 +270,9 @@ impl RabbitMqConsumer {
     }
 }
 
-impl_queue_consumer!(RabbitMqConsumer, Vec<u8>);
+impl_queue_consumer!(for RabbitMqConsumer {
+    type Payload = Vec<u8>;
+});
 
 struct RabbitMqAcker {
     acker: Option<LapinAcker>,

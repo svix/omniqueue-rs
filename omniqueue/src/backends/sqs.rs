@@ -370,7 +370,9 @@ impl SqsConsumer {
     }
 }
 
-impl_queue_consumer!(SqsConsumer, String);
+impl_queue_consumer!(for SqsConsumer {
+    type Payload = String;
+});
 
 fn aws_to_queue_error<E>(err: aws_sdk_sqs::error::SdkError<E>) -> QueueError
 where

@@ -239,4 +239,6 @@ impl AqsConsumer {
     }
 }
 
-impl_queue_consumer!(AqsConsumer, String);
+impl_queue_consumer!(for AqsConsumer {
+    type Payload = String;
+});

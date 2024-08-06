@@ -88,4 +88,6 @@ impl DynConsumer {
     }
 }
 
-impl_queue_consumer!(DynConsumer, Vec<u8>);
+impl_queue_consumer!(for DynConsumer {
+    type Payload = Vec<u8>;
+});

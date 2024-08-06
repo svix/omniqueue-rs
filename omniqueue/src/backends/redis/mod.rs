@@ -647,4 +647,6 @@ impl<R: RedisConnection> RedisConsumer<R> {
     }
 }
 
-impl_queue_consumer!(RedisConsumer<R: RedisConnection>, Vec<u8>);
+impl_queue_consumer!(for RedisConsumer<R: RedisConnection> {
+    type Payload = Vec<u8>;
+});
