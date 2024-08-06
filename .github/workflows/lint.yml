@@ -45,7 +45,7 @@ jobs:
       run: cargo hack --each-feature clippy --all-targets -- -D warnings
 
     - name: Start test dependencies
-      run: docker-compose -f "./testing-docker-compose.yml" up -d
+      run: docker compose -f "./testing-docker-compose.yml" up -d
 
     - name: Run tests
       env:
@@ -55,7 +55,7 @@ jobs:
       run: cargo test --all-features
 
     - name: Stop test dependencies
-      run: docker-compose -f "./testing-docker-compose.yml" down
+      run: docker compose -f "./testing-docker-compose.yml" down
 
   typos:
     name: Check for typos

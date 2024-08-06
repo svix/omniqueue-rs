@@ -96,7 +96,8 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
 
         self.already_acked_or_nacked = true;
 
-        self.redis
+        let _: () = self
+            .redis
             .get()
             .await
             .map_err(QueueError::generic)?
