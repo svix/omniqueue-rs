@@ -255,7 +255,9 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
     Ok(subscription)
 }
 
-impl_queue_consumer!(GcpPubSubConsumer, Payload);
+impl_queue_consumer!(for GcpPubSubConsumer {
+    type Payload = Payload;
+});
 
 struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,

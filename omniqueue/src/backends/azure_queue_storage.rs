@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use async_trait::async_trait;
 use azure_storage::StorageCredentials;
@@ -239,4 +239,11 @@ impl AqsConsumer {
     }
 }
 
-impl_queue_consumer!(AqsConsumer, String);
+impl_queue_consumer!(for AqsConsumer {
+    type Payload = String;
+
+    fn max_messages(&self) -> Option<NonZeroUsize> {
+        // https://learn.microsoft.com/en-us/rest/api/storageservices/get-messages#uri-parameters
+        NonZeroUsize::new(32)
+    }
+});
