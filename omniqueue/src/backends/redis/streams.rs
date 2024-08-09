@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bb8::ManageConnection;
 use redis::{
     streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
@@ -134,7 +133,6 @@ struct RedisStreamsAcker<M: ManageConnection> {
     already_acked_or_nacked: bool,
 }
 
-#[async_trait]
 impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {

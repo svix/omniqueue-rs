@@ -3,7 +3,6 @@
 
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bb8::ManageConnection;
 use redis::AsyncCommands;
 use svix_ksuid::{KsuidLike as _, KsuidMs};
@@ -87,7 +86,6 @@ struct RedisFallbackAcker<M: ManageConnection> {
     already_acked_or_nacked: bool,
 }
 
-#[async_trait]
 impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {

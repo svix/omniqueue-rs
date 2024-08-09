@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -153,7 +152,6 @@ struct InMemoryAcker {
     already_acked_or_nacked: bool,
 }
 
-#[async_trait]
 impl Acker for InMemoryAcker {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {

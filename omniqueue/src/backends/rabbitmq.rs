@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use futures_util::{FutureExt, StreamExt};
 use lapin::types::AMQPValue;
 pub use lapin::{
@@ -279,7 +278,6 @@ struct RabbitMqAcker {
     requeue_on_nack: bool,
 }
 
-#[async_trait]
 impl Acker for RabbitMqAcker {
     async fn ack(&mut self) -> Result<()> {
         self.acker

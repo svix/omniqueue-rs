@@ -1,6 +1,5 @@
 use std::{num::NonZeroUsize, time::Duration};
 
-use async_trait::async_trait;
 use azure_storage::StorageCredentials;
 use azure_storage_queues::{
     operations::Message, PopReceipt, QueueClient, QueueServiceClientBuilder,
@@ -152,7 +151,6 @@ struct AqsAcker {
     pop_receipt: PopReceipt,
 }
 
-#[async_trait]
 impl Acker for AqsAcker {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {

@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use google_cloud_googleapis::pubsub::v1::PubsubMessage;
 use google_cloud_pubsub::{
@@ -274,7 +273,6 @@ impl std::fmt::Debug for GcpPubSubAcker {
     }
 }
 
-#[async_trait]
 impl Acker for GcpPubSubAcker {
     async fn ack(&mut self) -> Result<()> {
         self.recv_msg.ack().await.map_err(QueueError::generic)

@@ -1,14 +1,16 @@
+#[cfg_attr(not(feature = "beta"), allow(unused_imports))]
 use std::{fmt, future::Future, time::Duration};
 
-use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
 use crate::{QueueError, QueuePayload, Result};
 
+mod acker;
 mod consumer;
 mod producer;
 
-pub(crate) use self::producer::ErasedQueueProducer;
+use self::acker::DynAcker;
+pub(crate) use self::{acker::Acker, producer::ErasedQueueProducer};
 pub use self::{
     consumer::{DynConsumer, QueueConsumer},
     producer::{DynProducer, QueueProducer},
@@ -45,7 +47,7 @@ pub trait QueueBackend {
 /// The output of queue backends
 pub struct Delivery {
     payload: Option<Vec<u8>>,
-    acker: Box<dyn Acker>,
+    acker: DynAcker,
 }
 
 impl Delivery {
@@ -63,7 +65,7 @@ impl Delivery {
     pub(crate) fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
         Self {
             payload: Some(payload),
-            acker: Box::new(acker),
+            acker: DynAcker::new(acker),
         }
     }
 
@@ -127,12 +129,4 @@ impl fmt::Debug for Delivery {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery").finish()
     }
-}
-
-#[async_trait]
-pub(crate) trait Acker: Send + Sync {
-    async fn ack(&mut self) -> Result<()>;
-    async fn nack(&mut self) -> Result<()>;
-    #[cfg_attr(not(feature = "beta"), allow(dead_code))]
-    async fn set_ack_deadline(&mut self, duration: Duration) -> Result<()>;
 }
