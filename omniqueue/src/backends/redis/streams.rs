@@ -113,16 +113,16 @@ fn wrap_entry<R: RedisConnection>(
         .ok_or(QueueError::NoData)?;
     let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
 
-    Ok(Delivery {
-        payload: Some(payload),
-        acker: Box::new(RedisStreamsAcker {
+    Ok(Delivery::new(
+        payload,
+        RedisStreamsAcker {
             redis: consumer.redis.clone(),
             queue_key: consumer.queue_key.to_owned(),
             consumer_group: consumer.consumer_group.to_owned(),
             entry_id,
             already_acked_or_nacked: false,
-        }),
-    })
+        },
+    ))
 }
 
 struct RedisStreamsAcker<M: ManageConnection> {

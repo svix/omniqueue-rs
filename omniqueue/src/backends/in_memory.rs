@@ -96,14 +96,14 @@ pub struct InMemoryConsumer {
 
 impl InMemoryConsumer {
     fn wrap_payload(&self, payload: Vec<u8>) -> Delivery {
-        Delivery {
-            payload: Some(payload.clone()),
-            acker: Box::new(InMemoryAcker {
+        Delivery::new(
+            payload.clone(),
+            InMemoryAcker {
                 tx: self.tx.clone(),
                 payload_copy: Some(payload),
                 already_acked_or_nacked: false,
-            }),
-        }
+            },
+        )
     }
 
     pub async fn receive(&mut self) -> Result<Delivery> {

@@ -180,14 +180,14 @@ impl Acker for AqsAcker {
 
 impl AqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
-        Delivery {
-            acker: Box::new(AqsAcker {
+        Delivery::new(
+            message.message_text.as_bytes().to_owned(),
+            AqsAcker {
                 client: self.client.clone(),
                 pop_receipt: message.pop_receipt(),
                 already_acked_or_nacked: false,
-            }),
-            payload: Some(message.message_text.as_bytes().to_owned()),
-        }
+            },
+        )
     }
 
     /// Note that blocking receives are not supported by Azure Queue Storage.

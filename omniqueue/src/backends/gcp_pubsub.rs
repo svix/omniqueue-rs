@@ -223,13 +223,13 @@ impl GcpPubSubConsumer {
         // returned _outside of the Acker_.
         let payload = recv_msg.message.data.drain(..).collect();
 
-        Delivery {
-            acker: Box::new(GcpPubSubAcker {
+        Delivery::new(
+            payload,
+            GcpPubSubAcker {
                 recv_msg,
                 subscription_id: self.subscription_id.clone(),
-            }),
-            payload: Some(payload),
-        }
+            },
+        )
     }
 }
 

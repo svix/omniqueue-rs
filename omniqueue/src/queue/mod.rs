@@ -44,11 +44,29 @@ pub trait QueueBackend {
 
 /// The output of queue backends
 pub struct Delivery {
-    pub(crate) payload: Option<Vec<u8>>,
-    pub(crate) acker: Box<dyn Acker>,
+    payload: Option<Vec<u8>>,
+    acker: Box<dyn Acker>,
 }
 
 impl Delivery {
+    #[cfg_attr(
+        not(any(
+            feature = "in_memory",
+            feature = "gcp_pubsub",
+            feature = "rabbitmq",
+            feature = "redis",
+            feature = "sqs",
+            feature = "azure_queue_storage"
+        )),
+        allow(dead_code)
+    )]
+    pub(crate) fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
+        Self {
+            payload: Some(payload),
+            acker: Box::new(acker),
+        }
+    }
+
     /// Acknowledges the receipt and successful processing of this [`Delivery`].
     ///
     /// On failure, `self` is returned alongside the error to allow retrying.

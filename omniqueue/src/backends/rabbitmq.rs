@@ -215,13 +215,13 @@ pub struct RabbitMqConsumer {
 
 impl RabbitMqConsumer {
     fn wrap_delivery(&self, delivery: lapin::message::Delivery) -> Delivery {
-        Delivery {
-            payload: Some(delivery.data),
-            acker: Box::new(RabbitMqAcker {
+        Delivery::new(
+            delivery.data,
+            RabbitMqAcker {
                 acker: Some(delivery.acker),
                 requeue_on_nack: self.requeue_on_nack,
-            }),
-        }
+            },
+        )
     }
 
     pub async fn receive(&mut self) -> Result<Delivery> {
