@@ -1,6 +1,5 @@
 use std::{num::NonZeroUsize, time::Duration};
 
-use async_trait::async_trait;
 use azure_storage::StorageCredentials;
 use azure_storage_queues::{
     operations::Message, PopReceipt, QueueClient, QueueServiceClientBuilder,
@@ -152,7 +151,6 @@ struct AqsAcker {
     pop_receipt: PopReceipt,
 }
 
-#[async_trait]
 impl Acker for AqsAcker {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
@@ -180,14 +178,14 @@ impl Acker for AqsAcker {
 
 impl AqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
-        Delivery {
-            acker: Box::new(AqsAcker {
+        Delivery::new(
+            message.message_text.as_bytes().to_owned(),
+            AqsAcker {
                 client: self.client.clone(),
                 pop_receipt: message.pop_receipt(),
                 already_acked_or_nacked: false,
-            }),
-            payload: Some(message.message_text.as_bytes().to_owned()),
-        }
+            },
+        )
     }
 
     /// Note that blocking receives are not supported by Azure Queue Storage.

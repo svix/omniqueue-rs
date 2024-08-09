@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use aws_sdk_sqs::{
     operation::delete_message::DeleteMessageError,
     types::{error::ReceiptHandleIsInvalid, Message},
@@ -191,7 +190,6 @@ struct SqsAcker {
     has_been_acked_or_nacked: bool,
 }
 
-#[async_trait]
 impl Acker for SqsAcker {
     async fn ack(&mut self) -> Result<()> {
         if self.has_been_acked_or_nacked {
@@ -319,15 +317,15 @@ pub struct SqsConsumer {
 
 impl SqsConsumer {
     fn wrap_message(&self, message: &Message) -> Delivery {
-        Delivery {
-            acker: Box::new(SqsAcker {
+        Delivery::new(
+            message.body().unwrap_or_default().as_bytes().to_owned(),
+            SqsAcker {
                 ack_client: self.client.clone(),
                 queue_dsn: self.queue_dsn.clone(),
                 receipt_handle: message.receipt_handle().map(ToOwned::to_owned),
                 has_been_acked_or_nacked: false,
-            }),
-            payload: Some(message.body().unwrap_or_default().as_bytes().to_owned()),
-        }
+            },
+        )
     }
 
     pub async fn receive(&self) -> Result<Delivery> {

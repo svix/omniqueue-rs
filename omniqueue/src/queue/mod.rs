@@ -1,14 +1,16 @@
+#[cfg_attr(not(feature = "beta"), allow(unused_imports))]
 use std::{fmt, future::Future, time::Duration};
 
-use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
 use crate::{QueueError, QueuePayload, Result};
 
+mod acker;
 mod consumer;
 mod producer;
 
-pub(crate) use self::producer::ErasedQueueProducer;
+use self::acker::DynAcker;
+pub(crate) use self::{acker::Acker, producer::ErasedQueueProducer};
 pub use self::{
     consumer::{DynConsumer, QueueConsumer},
     producer::{DynProducer, QueueProducer},
@@ -44,11 +46,29 @@ pub trait QueueBackend {
 
 /// The output of queue backends
 pub struct Delivery {
-    pub(crate) payload: Option<Vec<u8>>,
-    pub(crate) acker: Box<dyn Acker>,
+    payload: Option<Vec<u8>>,
+    acker: DynAcker,
 }
 
 impl Delivery {
+    #[cfg_attr(
+        not(any(
+            feature = "in_memory",
+            feature = "gcp_pubsub",
+            feature = "rabbitmq",
+            feature = "redis",
+            feature = "sqs",
+            feature = "azure_queue_storage"
+        )),
+        allow(dead_code)
+    )]
+    pub(crate) fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
+        Self {
+            payload: Some(payload),
+            acker: DynAcker::new(acker),
+        }
+    }
+
     /// Acknowledges the receipt and successful processing of this [`Delivery`].
     ///
     /// On failure, `self` is returned alongside the error to allow retrying.
@@ -109,12 +129,4 @@ impl fmt::Debug for Delivery {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Delivery").finish()
     }
-}
-
-#[async_trait]
-pub(crate) trait Acker: Send + Sync {
-    async fn ack(&mut self) -> Result<()>;
-    async fn nack(&mut self) -> Result<()>;
-    #[cfg_attr(not(feature = "beta"), allow(dead_code))]
-    async fn set_ack_deadline(&mut self, duration: Duration) -> Result<()>;
 }

@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use futures_util::{FutureExt, StreamExt};
 use lapin::types::AMQPValue;
 pub use lapin::{
@@ -215,13 +214,13 @@ pub struct RabbitMqConsumer {
 
 impl RabbitMqConsumer {
     fn wrap_delivery(&self, delivery: lapin::message::Delivery) -> Delivery {
-        Delivery {
-            payload: Some(delivery.data),
-            acker: Box::new(RabbitMqAcker {
+        Delivery::new(
+            delivery.data,
+            RabbitMqAcker {
                 acker: Some(delivery.acker),
                 requeue_on_nack: self.requeue_on_nack,
-            }),
-        }
+            },
+        )
     }
 
     pub async fn receive(&mut self) -> Result<Delivery> {
@@ -279,7 +278,6 @@ struct RabbitMqAcker {
     requeue_on_nack: bool,
 }
 
-#[async_trait]
 impl Acker for RabbitMqAcker {
     async fn ack(&mut self) -> Result<()> {
         self.acker

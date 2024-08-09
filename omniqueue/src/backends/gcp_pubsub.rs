@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use google_cloud_googleapis::pubsub::v1::PubsubMessage;
 use google_cloud_pubsub::{
@@ -223,13 +222,13 @@ impl GcpPubSubConsumer {
         // returned _outside of the Acker_.
         let payload = recv_msg.message.data.drain(..).collect();
 
-        Delivery {
-            acker: Box::new(GcpPubSubAcker {
+        Delivery::new(
+            payload,
+            GcpPubSubAcker {
                 recv_msg,
                 subscription_id: self.subscription_id.clone(),
-            }),
-            payload: Some(payload),
-        }
+            },
+        )
     }
 }
 
@@ -274,7 +273,6 @@ impl std::fmt::Debug for GcpPubSubAcker {
     }
 }
 
-#[async_trait]
 impl Acker for GcpPubSubAcker {
     async fn ack(&mut self) -> Result<()> {
         self.recv_msg.ack().await.map_err(QueueError::generic)

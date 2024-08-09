@@ -3,7 +3,6 @@
 
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bb8::ManageConnection;
 use redis::AsyncCommands;
 use svix_ksuid::{KsuidLike as _, KsuidMs};
@@ -68,15 +67,15 @@ async fn receive_with_timeout<R: RedisConnection>(
 fn make_delivery<R: RedisConnection>(consumer: &RedisConsumer<R>, key: &[u8]) -> Result<Delivery> {
     let (_, payload) = from_key(key)?;
 
-    Ok(Delivery {
-        payload: Some(payload.to_owned()),
-        acker: Box::new(RedisFallbackAcker {
+    Ok(Delivery::new(
+        payload.to_owned(),
+        RedisFallbackAcker {
             redis: consumer.redis.clone(),
             processing_queue_key: consumer.processing_queue_key.clone(),
             key: key.to_owned(),
             already_acked_or_nacked: false,
-        }),
-    })
+        },
+    ))
 }
 
 struct RedisFallbackAcker<M: ManageConnection> {
@@ -87,7 +86,6 @@ struct RedisFallbackAcker<M: ManageConnection> {
     already_acked_or_nacked: bool,
 }
 
-#[async_trait]
 impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
     async fn ack(&mut self) -> Result<()> {
         if self.already_acked_or_nacked {
