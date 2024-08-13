@@ -9,10 +9,42 @@ pub trait QueueProducer: Send + Sync + Sized {
 
     fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send;
 
+    /// Send a batch of raw messages.
+    ///
+    /// The default implementation of this sends the payloads sequentially using
+    /// [`send_raw`][QueueProducer::send_raw]. Specific backends use more
+    /// efficient implementations where the underlying protocols support it.
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    fn send_raw_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            for payload in payloads {
+                self.send_raw(payload.as_ref()).await?;
+            }
+            Ok(())
+        }
+    }
+
     fn send_bytes(&self, payload: &[u8]) -> impl Future<Output = Result<()>> + Send {
         async move {
             let payload = Self::Payload::from_bytes_naive(payload)?;
             self.send_raw(&payload).await
+        }
+    }
+
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    fn send_bytes_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<[u8]> + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            let payloads: Vec<_> = payloads
+                .into_iter()
+                .map(|p| Self::Payload::from_bytes_naive(p.as_ref()))
+                .collect::<Result<_, _>>()?;
+            self.send_raw_batch(payloads).await
         }
     }
 
@@ -23,6 +55,23 @@ pub trait QueueProducer: Send + Sync + Sized {
         async move {
             let payload = serde_json::to_vec(payload)?;
             self.send_bytes(&payload).await
+        }
+    }
+
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    fn send_serde_json_batch(
+        &self,
+        payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async move {
+            let payloads: Vec<_> = payloads
+                .into_iter()
+                .map(|payload| {
+                    let payload = serde_json::to_vec(&payload)?;
+                    Self::Payload::from_bytes_naive(&payload)
+                })
+                .collect::<Result<_>>()?;
+            self.send_raw_batch(payloads).await
         }
     }
 
