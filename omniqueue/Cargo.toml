@@ -26,6 +26,7 @@ redis = { version = "0.25.3", features = ["tokio-comp", "tokio-native-tls-comp",
 serde = "1.0.196"
 serde_json = "1"
 svix-ksuid = { version = "0.8.0", optional = true }
+sync_wrapper = "1.0.1"
 thiserror = "1"
 time = "0.3.34"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
