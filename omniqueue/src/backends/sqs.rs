@@ -307,8 +307,13 @@ impl SqsProducer {
     }
 }
 
-impl_queue_producer!(SqsProducer, String);
-impl_scheduled_queue_producer!(SqsProducer, String);
+impl crate::QueueProducer for SqsProducer {
+    type Payload = String;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl crate::ScheduledQueueProducer for SqsProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 pub struct SqsConsumer {
     client: Client,
@@ -369,15 +374,16 @@ impl SqsConsumer {
     }
 }
 
-impl_queue_consumer!(for SqsConsumer {
+impl crate::QueueConsumer for SqsConsumer {
     type Payload = String;
+    omni_delegate!(receive, receive_all);
 
     fn max_messages(&self) -> Option<NonZeroUsize> {
-        // Not very clearly documented, but this doc mentions "batch of 10 messages" a few times:
-        // https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
+        // Not very clearly documented, but this doc mentions "batch of 10 messages" a
+        // few times: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
         NonZeroUsize::new(10)
     }
-});
+}
 
 fn aws_to_queue_error<E>(err: aws_sdk_sqs::error::SdkError<E>) -> QueueError
 where

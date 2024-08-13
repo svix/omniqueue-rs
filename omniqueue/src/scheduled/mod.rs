@@ -105,5 +105,10 @@ impl DynScheduledProducer {
     }
 }
 
-impl_queue_producer!(DynScheduledProducer, Vec<u8>);
-impl_scheduled_queue_producer!(DynScheduledProducer, Vec<u8>);
+impl crate::QueueProducer for DynScheduledProducer {
+    type Payload = Vec<u8>;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl crate::ScheduledQueueProducer for DynScheduledProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}

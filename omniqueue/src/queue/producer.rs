@@ -74,4 +74,7 @@ impl DynProducer {
     }
 }
 
-impl_queue_producer!(DynProducer, Vec<u8>);
+impl crate::QueueProducer for DynProducer {
+    type Payload = Vec<u8>;
+    omni_delegate!(send_raw, send_serde_json);
+}

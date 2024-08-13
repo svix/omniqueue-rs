@@ -170,7 +170,10 @@ impl std::fmt::Debug for GcpPubSubProducer {
     }
 }
 
-impl_queue_producer!(GcpPubSubProducer, Payload);
+impl crate::QueueProducer for GcpPubSubProducer {
+    type Payload = Payload;
+    omni_delegate!(send_raw, send_serde_json);
+}
 
 pub struct GcpPubSubConsumer {
     client: Client,
@@ -254,9 +257,10 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
     Ok(subscription)
 }
 
-impl_queue_consumer!(for GcpPubSubConsumer {
+impl crate::QueueConsumer for GcpPubSubConsumer {
     type Payload = Payload;
-});
+    omni_delegate!(receive, receive_all);
+}
 
 struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,
