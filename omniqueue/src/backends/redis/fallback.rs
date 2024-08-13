@@ -92,8 +92,6 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
             return Err(QueueError::CannotAckOrNackTwice);
         }
 
-        self.already_acked_or_nacked = true;
-
         let _: () = self
             .redis
             .get()
@@ -102,6 +100,8 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
             .lrem(&self.processing_queue_key, 1, &self.key)
             .await
             .map_err(QueueError::generic)?;
+
+        self.already_acked_or_nacked = true;
 
         Ok(())
     }
