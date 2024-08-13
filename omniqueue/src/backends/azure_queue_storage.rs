@@ -156,13 +156,14 @@ impl Acker for AqsAcker {
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
-        self.already_acked_or_nacked = true;
+
         self.client
             .pop_receipt_client(self.pop_receipt.clone())
             .delete()
             .await
-            .map_err(QueueError::generic)
-            .map(|_| ())
+            .map_err(QueueError::generic)?;
+        self.already_acked_or_nacked = true;
+        Ok(())
     }
 
     async fn nack(&mut self) -> Result<()> {
