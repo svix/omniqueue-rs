@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use bb8::ManageConnection;
 use redis::{
-    streams::{StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply},
+    streams::{
+        StreamAutoClaimOptions, StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply,
+    },
     AsyncCommands as _, FromRedisValue, RedisResult,
 };
 use tracing::{error, trace};
@@ -20,7 +22,7 @@ const LISTEN_STREAM_ID: &str = ">";
 /// The maximum number of pending messages to reinsert into the queue after
 /// becoming stale per loop
 // FIXME(onelson): expose in config?
-const PENDING_BATCH_SIZE: i16 = 1000;
+const PENDING_BATCH_SIZE: usize = 1000;
 
 pub(super) async fn send_raw<R: RedisConnection>(
     producer: &RedisProducer<R>,
@@ -250,17 +252,15 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
     // Every iteration checks whether the processing queue has items that should
     // be picked back up, claiming them in the process
-    let mut cmd = redis::cmd("XAUTOCLAIM");
-    cmd.arg(main_queue_name)
-        .arg(consumer_group)
-        .arg(consumer_name)
-        .arg(ack_deadline_ms)
-        .arg("-")
-        .arg("COUNT")
-        .arg(PENDING_BATCH_SIZE);
-
-    let StreamAutoclaimReply { ids } = cmd
-        .query_async(&mut *conn)
+    let StreamAutoclaimReply { ids } = conn
+        .xautoclaim_options(
+            main_queue_name,
+            consumer_group,
+            consumer_name,
+            ack_deadline_ms,
+            "-",
+            StreamAutoClaimOptions::default().count(PENDING_BATCH_SIZE),
+        )
         .await
         .map_err(QueueError::generic)?;
 
@@ -276,7 +276,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                 GENERATE_STREAM_ID,
                 &map.iter()
                     .filter_map(|(k, v)| {
-                        if let redis::Value::Data(data) = v {
+                        if let redis::Value::BulkString(data) = v {
                             Some((k.as_str(), data.as_slice()))
                         } else {
                             None

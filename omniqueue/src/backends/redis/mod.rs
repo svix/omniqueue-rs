@@ -104,7 +104,7 @@ async fn check_eviction_policy<R: RedisConnection>(
     let results: Vec<String> = redis::cmd("CONFIG")
         .arg("GET")
         .arg("maxmemory-policy")
-        .query_async::<R::Connection, Vec<String>>(&mut *conn)
+        .query_async(&mut *conn)
         .await
         .map_err(|_| EvictionCheckError::CheckEvictionPolicyFailed)?;
 
