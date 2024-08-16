@@ -4,10 +4,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::StreamExt;
+use futures_util::{future::try_join_all, StreamExt};
 use google_cloud_googleapis::pubsub::v1::PubsubMessage;
 use google_cloud_pubsub::{
     client::{google_cloud_auth::credentials::CredentialsFile, Client, ClientConfig},
+    publisher::Publisher,
     subscriber::ReceivedMessage,
     subscription::Subscription,
 };
@@ -125,17 +126,7 @@ impl GcpPubSubProducer {
         })
     }
 
-    #[tracing::instrument(
-        name = "send",
-        skip_all,
-        fields(payload_size = payload.len())
-    )]
-    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
-        let msg = PubsubMessage {
-            data: payload.to_vec(),
-            ..Default::default()
-        };
-
+    async fn publisher(&self) -> Result<Publisher> {
         // N.b. defer the creation of a publisher/topic until needed. Helps recover when
         // the topic does not yet exist, but will soon.
         // Might be more expensive to recreate each time, but overall more reliable.
@@ -150,8 +141,23 @@ impl GcpPubSubProducer {
                 format!("topic {} does not exist", &self.topic_id).into(),
             ));
         }
+
         // FIXME: may need to expose `PublisherConfig` to caller so they can tweak this
-        let publisher = topic.new_publisher(None);
+        Ok(topic.new_publisher(None))
+    }
+
+    #[tracing::instrument(
+        name = "send",
+        skip_all,
+        fields(payload_size = payload.len())
+    )]
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+        let msg = PubsubMessage {
+            data: payload.to_vec(),
+            ..Default::default()
+        };
+
+        let publisher = self.publisher().await?;
         let awaiter = publisher.publish(msg).await;
         awaiter.get().await.map_err(QueueError::generic)?;
         Ok(())
@@ -170,7 +176,58 @@ impl std::fmt::Debug for GcpPubSubProducer {
     }
 }
 
-impl_queue_producer!(GcpPubSubProducer, Payload);
+impl crate::QueueProducer for GcpPubSubProducer {
+    type Payload = Payload;
+    omni_delegate!(send_raw, send_serde_json);
+
+    /// This method is overwritten for the Google Cloud Pub/Sub backend to be
+    /// more efficient than the default of sequentially publishing `payloads`.
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    async fn send_raw_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
+    ) -> Result<()> {
+        let msgs = payloads
+            .into_iter()
+            .map(|payload| PubsubMessage {
+                data: payload.as_ref().to_vec(),
+                ..Default::default()
+            })
+            .collect();
+
+        let publisher = self.publisher().await?;
+        let awaiters = publisher.publish_bulk(msgs).await;
+        try_join_all(awaiters.into_iter().map(|a| a.get()))
+            .await
+            .map_err(QueueError::generic)?;
+        Ok(())
+    }
+
+    /// This method is overwritten for the Google Cloud Pub/Sub backend to be
+    /// more efficient than the default of sequentially publishing `payloads`.
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    async fn send_serde_json_batch(
+        &self,
+        payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
+    ) -> Result<()> {
+        let msgs = payloads
+            .into_iter()
+            .map(|payload| {
+                Ok(PubsubMessage {
+                    data: serde_json::to_vec(&payload)?,
+                    ..Default::default()
+                })
+            })
+            .collect::<Result<_>>()?;
+
+        let publisher = self.publisher().await?;
+        let awaiters = publisher.publish_bulk(msgs).await;
+        try_join_all(awaiters.into_iter().map(|a| a.get()))
+            .await
+            .map_err(QueueError::generic)?;
+        Ok(())
+    }
+}
 
 pub struct GcpPubSubConsumer {
     client: Client,
@@ -254,9 +311,10 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
     Ok(subscription)
 }
 
-impl_queue_consumer!(for GcpPubSubConsumer {
+impl crate::QueueConsumer for GcpPubSubConsumer {
     type Payload = Payload;
-});
+    omni_delegate!(receive, receive_all);
+}
 
 struct GcpPubSubAcker {
     recv_msg: ReceivedMessage,

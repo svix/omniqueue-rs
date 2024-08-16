@@ -204,8 +204,13 @@ impl RabbitMqProducer {
     }
 }
 
-impl_queue_producer!(RabbitMqProducer, Vec<u8>);
-impl_scheduled_queue_producer!(RabbitMqProducer, Vec<u8>);
+impl crate::QueueProducer for RabbitMqProducer {
+    type Payload = Vec<u8>;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl crate::ScheduledQueueProducer for RabbitMqProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 pub struct RabbitMqConsumer {
     consumer: Consumer,
@@ -269,9 +274,10 @@ impl RabbitMqConsumer {
     }
 }
 
-impl_queue_consumer!(for RabbitMqConsumer {
+impl crate::QueueConsumer for RabbitMqConsumer {
     type Payload = Vec<u8>;
-});
+    omni_delegate!(receive, receive_all);
+}
 
 struct RabbitMqAcker {
     acker: Option<LapinAcker>,

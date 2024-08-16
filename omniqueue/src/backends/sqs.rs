@@ -1,12 +1,13 @@
 use std::{
     fmt::{self, Write},
+    future::Future,
     num::NonZeroUsize,
     time::Duration,
 };
 
 use aws_sdk_sqs::{
     operation::delete_message::DeleteMessageError,
-    types::{error::ReceiptHandleIsInvalid, Message},
+    types::{error::ReceiptHandleIsInvalid, Message, SendMessageBatchRequestEntry},
     Client,
 };
 use serde::Serialize;
@@ -20,6 +21,8 @@ use crate::{
 
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
 const MAX_PAYLOAD_SIZE: usize = 262_144;
+/// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html
+const MAX_BATCH_SIZE: usize = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
@@ -305,10 +308,80 @@ impl SqsProducer {
         let payload = serde_json::to_string(payload)?;
         self.send_raw_scheduled(&payload, delay).await
     }
+
+    #[tracing::instrument(name = "send_batch", skip_all)]
+    async fn send_batch_inner<I>(
+        &self,
+        payloads: impl IntoIterator<Item = I, IntoIter: Send> + Send,
+        convert_payload: impl Fn(I) -> Result<String>,
+    ) -> Result<()> {
+        // Convert payloads up front and collect to Vec to run the payload size
+        // check on everything before submitting the first batch.
+        let payloads: Vec<_> = payloads
+            .into_iter()
+            .map(convert_payload)
+            .collect::<Result<_>>()?;
+
+        for payload in &payloads {
+            if payload.len() > MAX_PAYLOAD_SIZE {
+                return Err(QueueError::PayloadTooLarge {
+                    limit: MAX_PAYLOAD_SIZE,
+                    actual: payload.len(),
+                });
+            }
+        }
+
+        for payloads in payloads.chunks(MAX_BATCH_SIZE) {
+            let entries = payloads
+                .iter()
+                .enumerate()
+                .map(|(i, payload)| {
+                    SendMessageBatchRequestEntry::builder()
+                        .message_body(payload)
+                        .id(i.to_string())
+                        .build()
+                        .map_err(QueueError::generic)
+                })
+                .collect::<Result<_>>()?;
+
+            self.client
+                .send_message_batch()
+                .queue_url(&self.queue_dsn)
+                .set_entries(Some(entries))
+                .send()
+                .await
+                .map_err(aws_to_queue_error)?;
+        }
+
+        Ok(())
+    }
 }
 
-impl_queue_producer!(SqsProducer, String);
-impl_scheduled_queue_producer!(SqsProducer, String);
+impl crate::QueueProducer for SqsProducer {
+    type Payload = String;
+    omni_delegate!(send_raw, send_serde_json);
+
+    /// This method is overwritten for the SQS backend to be more efficient
+    /// than the default of sequentially publishing `payloads`.
+    fn send_raw_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> {
+        self.send_batch_inner(payloads, |p| Ok(p.as_ref().into()))
+    }
+
+    /// This method is overwritten for the SQS backend to be more efficient
+    /// than the default of sequentially publishing `payloads`.
+    fn send_serde_json_batch(
+        &self,
+        payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> {
+        self.send_batch_inner(payloads, |p| Ok(serde_json::to_string(&p)?))
+    }
+}
+impl crate::ScheduledQueueProducer for SqsProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 pub struct SqsConsumer {
     client: Client,
@@ -369,15 +442,16 @@ impl SqsConsumer {
     }
 }
 
-impl_queue_consumer!(for SqsConsumer {
+impl crate::QueueConsumer for SqsConsumer {
     type Payload = String;
+    omni_delegate!(receive, receive_all);
 
     fn max_messages(&self) -> Option<NonZeroUsize> {
-        // Not very clearly documented, but this doc mentions "batch of 10 messages" a few times:
-        // https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
+        // Not very clearly documented, but this doc mentions "batch of 10 messages" a
+        // few times: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
         NonZeroUsize::new(10)
     }
-});
+}
 
 fn aws_to_queue_error<E>(err: aws_sdk_sqs::error::SdkError<E>) -> QueueError
 where

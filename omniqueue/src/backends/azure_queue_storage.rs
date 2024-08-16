@@ -135,8 +135,13 @@ impl AqsProducer {
     }
 }
 
-impl_queue_producer!(AqsProducer, String);
-impl_scheduled_queue_producer!(AqsProducer, String);
+impl crate::QueueProducer for AqsProducer {
+    type Payload = String;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl crate::ScheduledQueueProducer for AqsProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 /// Note that blocking receives are not supported by Azure Queue Storage and
 /// that message order is not guaranteed.
@@ -238,11 +243,12 @@ impl AqsConsumer {
     }
 }
 
-impl_queue_consumer!(for AqsConsumer {
+impl crate::QueueConsumer for AqsConsumer {
     type Payload = String;
+    omni_delegate!(receive, receive_all);
 
     fn max_messages(&self) -> Option<NonZeroUsize> {
         // https://learn.microsoft.com/en-us/rest/api/storageservices/get-messages#uri-parameters
         NonZeroUsize::new(32)
     }
-});
+}

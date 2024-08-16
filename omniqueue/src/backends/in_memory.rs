@@ -85,8 +85,13 @@ impl InMemoryProducer {
     }
 }
 
-impl_queue_producer!(InMemoryProducer, Vec<u8>);
-impl_scheduled_queue_producer!(InMemoryProducer, Vec<u8>);
+impl crate::QueueProducer for InMemoryProducer {
+    type Payload = Vec<u8>;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl crate::ScheduledQueueProducer for InMemoryProducer {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 pub struct InMemoryConsumer {
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
@@ -142,9 +147,10 @@ impl InMemoryConsumer {
     }
 }
 
-impl_queue_consumer!(for InMemoryConsumer {
+impl crate::QueueConsumer for InMemoryConsumer {
     type Payload = Vec<u8>;
-});
+    omni_delegate!(receive, receive_all);
+}
 
 struct InMemoryAcker {
     tx: mpsc::UnboundedSender<Vec<u8>>,

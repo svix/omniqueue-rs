@@ -112,8 +112,9 @@ impl DynConsumer {
     }
 }
 
-impl_queue_consumer!(for DynConsumer {
+impl crate::QueueConsumer for DynConsumer {
     type Payload = Vec<u8>;
+    omni_delegate!(receive, receive_all);
 
     fn into_dyn(self) -> DynConsumer {
         self
@@ -122,4 +123,4 @@ impl_queue_consumer!(for DynConsumer {
     fn max_messages(&self) -> Option<NonZeroUsize> {
         self.0.max_messages()
     }
-});
+}

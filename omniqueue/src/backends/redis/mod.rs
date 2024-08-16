@@ -573,8 +573,13 @@ impl<R: RedisConnection> RedisProducer<R> {
     }
 }
 
-impl_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
-impl_scheduled_queue_producer!(RedisProducer<R: RedisConnection>, Vec<u8>);
+impl<R: RedisConnection> crate::QueueProducer for RedisProducer<R> {
+    type Payload = Vec<u8>;
+    omni_delegate!(send_raw, send_serde_json);
+}
+impl<R: RedisConnection> crate::ScheduledQueueProducer for RedisProducer<R> {
+    omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+}
 
 fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
     Ok(time.duration_since(UNIX_EPOCH)?.as_secs())
@@ -647,6 +652,7 @@ impl<R: RedisConnection> RedisConsumer<R> {
     }
 }
 
-impl_queue_consumer!(for RedisConsumer<R: RedisConnection> {
+impl<R: RedisConnection> crate::QueueConsumer for RedisConsumer<R> {
     type Payload = Vec<u8>;
-});
+    omni_delegate!(receive, receive_all);
+}
