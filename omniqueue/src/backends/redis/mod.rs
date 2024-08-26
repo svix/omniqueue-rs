@@ -85,6 +85,63 @@ impl RedisConnection for RedisClusterConnectionManager {
     }
 }
 
+// First element is the raw payload slice, second
+// is `num_receives`, the number of the times
+// the message has previously been received.
+type InternalPayload<'a> = (&'a [u8], usize);
+
+// The same as `InternalPayload` but with an
+// owned payload.
+type InternalPayloadOwned = (Vec<u8>, usize);
+
+fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
+    // All information is stored in the key in which the ID and the [optional]
+    // number of prior receives are separated by a `#`, and the JSON
+    // formatted task is delimited by a `|` So, take the key, then take the
+    // optional receive count, then take the part after the `|` to get the
+    // payload.
+    let count_sep_pos = payload.iter().position(|&byte| byte == b'#');
+    let payload_sep_pos = payload
+        .iter()
+        .position(|&byte| byte == b'|')
+        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
+
+    let id_end_pos = match count_sep_pos {
+        Some(count_sep_pos) if count_sep_pos < payload_sep_pos => count_sep_pos,
+        _ => payload_sep_pos,
+    };
+    let _id = str::from_utf8(&payload[..id_end_pos])
+        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
+
+    // This should be backward-compatible with messages that don't include
+    // `num_receives`
+    let num_receives = if let Some(count_sep_pos) = count_sep_pos {
+        let num_receives = std::str::from_utf8(&payload[(count_sep_pos + 1)..payload_sep_pos])
+            .map_err(|_| QueueError::Generic("Improper key format".into()))?
+            .parse::<usize>()
+            .map_err(|_| QueueError::Generic("Improper key format".into()))?;
+        num_receives + 1
+    } else {
+        1
+    };
+
+    Ok((&payload[payload_sep_pos + 1..], num_receives))
+}
+
+fn internal_to_list_payload(internal: InternalPayload) -> Vec<u8> {
+    let id = delayed_key_id();
+    let (payload, num_receives) = internal;
+    let num_receives = num_receives.to_string();
+    let mut result =
+        Vec::with_capacity(id.len() + num_receives.as_bytes().len() + payload.len() + 3);
+    result.extend(id.as_bytes());
+    result.push(b'#');
+    result.extend(num_receives.as_bytes());
+    result.push(b'|');
+    result.extend(payload);
+    result
+}
+
 #[derive(Debug, Error)]
 enum EvictionCheckError {
     #[error("Unable to verify eviction policy. Ensure `maxmemory-policy` set to `noeviction` or `volatile-*`")]
@@ -139,6 +196,7 @@ pub struct RedisConfig {
     pub consumer_name: String,
     pub payload_key: String,
     pub ack_deadline_ms: i64,
+    pub max_receives: Option<usize>,
 }
 
 pub struct RedisBackend<R = RedisConnectionManager>(PhantomData<R>);
@@ -290,6 +348,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 payload_key: self.config.payload_key,
                 use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
+                max_receives: self.config.max_receives.unwrap_or(usize::MAX),
             },
         ))
     }
@@ -332,6 +391,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             consumer_name: self.config.consumer_name,
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
+            max_receives: self.config.max_receives.unwrap_or(usize::MAX),
             _background_tasks,
         })
     }
@@ -395,6 +455,8 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.consumer_group.to_owned(),
                 self.config.consumer_name.to_owned(),
                 self.config.ack_deadline_ms,
+                self.config.max_receives.unwrap_or(usize::MAX),
+                self.config.payload_key.to_owned(),
             ));
         } else {
             join_set.spawn(fallback::background_task_processing(
@@ -402,6 +464,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.queue_key.to_owned(),
                 self.get_processing_queue_key(),
                 self.config.ack_deadline_ms,
+                self.config.max_receives.unwrap_or(usize::MAX),
             ));
         }
 
@@ -555,7 +618,11 @@ impl<R: RedisConnection> RedisProducer<R> {
             .get()
             .await
             .map_err(QueueError::generic)?
-            .zadd(&self.delayed_queue_key, to_key(payload), timestamp)
+            .zadd(
+                &self.delayed_queue_key,
+                internal_to_list_payload((payload, 0)),
+                timestamp,
+            )
             .await
             .map_err(QueueError::generic)?;
 
@@ -594,31 +661,6 @@ fn delayed_key_id() -> String {
     svix_ksuid::Ksuid::new(None, None).to_base62()
 }
 
-/// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_key(payload: &[u8]) -> RawPayload {
-    let id = delayed_key_id();
-
-    let mut result = Vec::with_capacity(id.len() + payload.len() + 1);
-    result.extend(id.as_bytes());
-    result.push(b'|');
-    result.extend(payload);
-    result
-}
-
-/// Splits a key encoded with [`to_key`] into ID and payload.
-fn from_key(key: &[u8]) -> Result<(&str, &[u8])> {
-    // All information is stored in the key in which the ID and JSON formatted task
-    // are separated by a `|`. So, take the key, then take the part after the `|`.
-    let sep_pos = key
-        .iter()
-        .position(|&byte| byte == b'|')
-        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    let id = str::from_utf8(&key[..sep_pos])
-        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
-
-    Ok((id, &key[sep_pos + 1..]))
-}
-
 pub struct RedisConsumer<M: ManageConnection> {
     redis: bb8::Pool<M>,
     queue_key: String,
@@ -627,6 +669,7 @@ pub struct RedisConsumer<M: ManageConnection> {
     consumer_name: String,
     payload_key: String,
     use_redis_streams: bool,
+    max_receives: usize,
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 

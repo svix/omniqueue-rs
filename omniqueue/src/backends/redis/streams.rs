@@ -11,7 +11,9 @@ use redis::{
 };
 use tracing::{error, trace};
 
-use super::{from_key, RedisConnection, RedisConsumer, RedisProducer};
+use super::{
+    internal_from_list, InternalPayloadOwned, RedisConnection, RedisConsumer, RedisProducer,
+};
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
 /// Special ID for XADD command's which generates a stream ID automatically
@@ -23,6 +25,15 @@ const LISTEN_STREAM_ID: &str = ">";
 /// becoming stale per loop
 // FIXME(onelson): expose in config?
 const PENDING_BATCH_SIZE: usize = 1000;
+
+macro_rules! internal_to_stream_payload {
+    (($payload:expr, $num_receives:expr), $payload_key:expr) => {
+        &[
+            ($payload_key, $payload),
+            (NUM_RECEIVES, $num_receives.to_string().as_bytes()),
+        ]
+    };
+}
 
 pub(super) async fn send_raw<R: RedisConnection>(
     producer: &RedisProducer<R>,
@@ -36,7 +47,7 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .xadd(
             &producer.queue_key,
             GENERATE_STREAM_ID,
-            &[(&producer.payload_key, payload)],
+            internal_to_stream_payload!((payload, 0), producer.payload_key.as_str()),
         )
         .await
         .map_err(QueueError::generic)
@@ -63,7 +74,8 @@ pub(super) async fn receive<R: RedisConnection>(consumer: &RedisConsumer<R>) -> 
     let queue = read_out.keys.into_iter().next().ok_or(QueueError::NoData)?;
     let entry = queue.ids.into_iter().next().ok_or(QueueError::NoData)?;
 
-    wrap_entry(consumer, entry)
+    let internal = internal_from_stream(&entry, &consumer.payload_key)?;
+    Ok(internal_to_delivery(internal, consumer, entry.id))
 }
 
 pub(super) async fn receive_all<R: RedisConnection>(
@@ -96,25 +108,44 @@ pub(super) async fn receive_all<R: RedisConnection>(
 
     if let Some(queue) = read_out.keys.into_iter().next() {
         for entry in queue.ids {
-            let wrapped = wrap_entry(consumer, entry)?;
-            out.push(wrapped);
+            let internal = internal_from_stream(&entry, &consumer.payload_key)?;
+            let delivery = internal_to_delivery(internal, consumer, entry.id);
+            out.push(delivery);
         }
     }
     Ok(out)
 }
 
-fn wrap_entry<R: RedisConnection>(
-    consumer: &RedisConsumer<R>,
-    entry: StreamId,
-) -> Result<Delivery> {
-    let entry_id = entry.id.clone();
-    let payload = entry
-        .map
-        .get(&consumer.payload_key)
-        .ok_or(QueueError::NoData)?;
-    let payload: Vec<u8> = redis::from_redis_value(payload).map_err(QueueError::generic)?;
+const NUM_RECEIVES: &str = "num_receives";
 
-    Ok(Delivery::new(
+fn internal_from_stream(stream_id: &StreamId, payload_key: &str) -> Result<InternalPayloadOwned> {
+    let StreamId { map, .. } = stream_id;
+
+    let num_receives = if let Some(redis::Value::BulkString(data)) = map.get(NUM_RECEIVES) {
+        let count = std::str::from_utf8(data)
+            .map_err(|_| QueueError::Generic("Improper key format".into()))?
+            .parse::<usize>()
+            .map_err(QueueError::generic)?;
+        count + 1
+    } else {
+        1
+    };
+
+    let payload: Vec<u8> = map
+        .get(payload_key)
+        .ok_or(QueueError::NoData)
+        .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
+
+    Ok((payload, num_receives))
+}
+
+fn internal_to_delivery<R: RedisConnection>(
+    internal: InternalPayloadOwned,
+    consumer: &RedisConsumer<R>,
+    entry_id: String,
+) -> Delivery {
+    let (payload, num_receives) = internal;
+    Delivery::new(
         payload,
         RedisStreamsAcker {
             redis: consumer.redis.clone(),
@@ -122,17 +153,21 @@ fn wrap_entry<R: RedisConnection>(
             consumer_group: consumer.consumer_group.to_owned(),
             entry_id,
             already_acked_or_nacked: false,
+            max_receives: consumer.max_receives,
+            num_receives,
         },
-    ))
+    )
 }
 
-struct RedisStreamsAcker<M: ManageConnection> {
-    redis: bb8::Pool<M>,
-    queue_key: String,
-    consumer_group: String,
-    entry_id: String,
+pub(super) struct RedisStreamsAcker<M: ManageConnection> {
+    pub(super) redis: bb8::Pool<M>,
+    pub(super) queue_key: String,
+    pub(super) consumer_group: String,
+    pub(super) entry_id: String,
 
-    already_acked_or_nacked: bool,
+    pub(super) already_acked_or_nacked: bool,
+    pub(super) max_receives: usize,
+    pub(super) num_receives: usize,
 }
 
 impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
@@ -157,6 +192,11 @@ impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
     }
 
     async fn nack(&mut self) -> Result<()> {
+        if self.num_receives >= self.max_receives {
+            trace!(entry_id = self.entry_id, "Maximum attempts reached");
+            return self.ack().await;
+        }
+
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
@@ -181,11 +221,13 @@ pub(super) async fn add_to_main_queue(
 ) -> Result<()> {
     let mut pipe = redis::pipe();
     for key in keys {
-        let (_, payload) = from_key(key)?;
+        // We don't care about `num_receives` here since we're
+        // re-queuing from delayed queue:
+        let (payload, _) = internal_from_list(key)?;
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
-            &[(payload_key, payload)],
+            internal_to_stream_payload!((payload, 0), payload_key),
         );
     }
 
@@ -223,6 +265,8 @@ pub(super) async fn background_task_pending<R: RedisConnection>(
     consumer_group: String,
     consumer_name: String,
     ack_deadline_ms: i64,
+    max_receives: usize,
+    payload_key: String,
 ) -> Result<()> {
     loop {
         if let Err(err) = reenqueue_timed_out_messages(
@@ -231,6 +275,8 @@ pub(super) async fn background_task_pending<R: RedisConnection>(
             &consumer_group,
             &consumer_name,
             ack_deadline_ms,
+            max_receives,
+            &payload_key,
         )
         .await
         {
@@ -247,6 +293,8 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
     consumer_group: &str,
     consumer_name: &str,
     ack_deadline_ms: i64,
+    max_receives: usize,
+    payload_key: &str,
 ) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -270,19 +318,20 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         let mut pipe = redis::pipe();
 
         // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
-        for StreamId { map, .. } in &ids {
+        for stream_id in &ids {
+            let (payload, num_receives) = internal_from_stream(stream_id, payload_key)?;
+            if num_receives >= max_receives {
+                trace!(
+                    entry_id = stream_id.id,
+                    "Maximum attempts reached for message, not reenqueuing",
+                );
+                continue;
+            }
+
             let _ = pipe.xadd(
                 main_queue_name,
                 GENERATE_STREAM_ID,
-                &map.iter()
-                    .filter_map(|(k, v)| {
-                        if let redis::Value::BulkString(data) = v {
-                            Some((k.as_str(), data.as_slice()))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<(&str, &[u8])>>(),
+                internal_to_stream_payload!((payload.as_slice(), num_receives), payload_key),
             );
         }
 
