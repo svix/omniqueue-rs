@@ -37,12 +37,14 @@ use std::{
     str,
     sync::Arc,
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
+    usize,
 };
 
 use bb8::ManageConnection;
 pub use bb8_redis::RedisConnectionManager;
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
+use redis::{streams::StreamId, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use serde::Serialize;
+use streams::RedisStreamsAcker;
 use svix_ksuid::KsuidLike;
 use thiserror::Error;
 use tokio::task::JoinSet;
@@ -82,6 +84,76 @@ impl RedisConnection for RedisConnectionManager {
 impl RedisConnection for RedisClusterConnectionManager {
     fn from_dsn(dsn: &str) -> Result<Self> {
         Self::new(dsn).map_err(QueueError::generic)
+    }
+}
+
+const NUM_RECEIVES: &str = "num_receives";
+struct InternalPayload {
+    payload: Vec<u8>,
+    num_receives: usize,
+}
+
+impl InternalPayload {
+    fn from_stream_id(stream_id: &StreamId, payload_key: &str) -> Result<Self> {
+        let StreamId { map, .. } = stream_id;
+
+        let num_receives = if let Some(raw_count) = map.get(NUM_RECEIVES) {
+            if let redis::Value::BulkString(data) = raw_count {
+                let count = std::str::from_utf8(data)
+                    // FIXME
+                    .unwrap()
+                    .parse::<usize>()
+                    .map_err(QueueError::generic)?;
+                count + 1
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        let payload: Vec<u8> = map
+            .get(payload_key)
+            .ok_or(QueueError::NoData)
+            .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
+
+        Ok(Self {
+            payload,
+            num_receives,
+        })
+    }
+
+    fn to_redis_payload(self, payload_key: &str) -> Vec<(&str, Vec<u8>)> {
+        vec![
+            (payload_key, self.payload),
+            (
+                NUM_RECEIVES,
+                self.num_receives.to_string().as_bytes().to_vec(),
+            ),
+        ]
+    }
+
+    fn to_stream_delivery<R: RedisConnection>(
+        self,
+        consumer: &RedisConsumer<R>,
+        entry_id: String,
+    ) -> Delivery {
+        let InternalPayload {
+            payload,
+            num_receives,
+        } = self;
+        Delivery::new(
+            payload,
+            RedisStreamsAcker {
+                redis: consumer.redis.clone(),
+                queue_key: consumer.queue_key.to_owned(),
+                consumer_group: consumer.consumer_group.to_owned(),
+                entry_id,
+                already_acked_or_nacked: false,
+                max_receives: consumer.max_receives,
+                num_receives,
+            },
+        )
     }
 }
 
@@ -139,6 +211,7 @@ pub struct RedisConfig {
     pub consumer_name: String,
     pub payload_key: String,
     pub ack_deadline_ms: i64,
+    pub max_receives: Option<usize>,
 }
 
 pub struct RedisBackend<R = RedisConnectionManager>(PhantomData<R>);
@@ -290,6 +363,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 payload_key: self.config.payload_key,
                 use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
+                max_receives: self.config.max_receives.unwrap_or(usize::MAX),
             },
         ))
     }
@@ -332,6 +406,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             consumer_name: self.config.consumer_name,
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
+            max_receives: self.config.max_receives.unwrap_or(usize::MAX),
             _background_tasks,
         })
     }
@@ -395,6 +470,8 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.consumer_group.to_owned(),
                 self.config.consumer_name.to_owned(),
                 self.config.ack_deadline_ms,
+                self.config.max_receives.unwrap_or(usize::MAX),
+                self.config.payload_key.to_owned(),
             ));
         } else {
             join_set.spawn(fallback::background_task_processing(
@@ -600,23 +677,44 @@ fn to_key(payload: &[u8]) -> RawPayload {
 
     let mut result = Vec::with_capacity(id.len() + payload.len() + 1);
     result.extend(id.as_bytes());
+    result.push(b'#');
+    result.push(b'0');
     result.push(b'|');
     result.extend(payload);
     result
 }
 
 /// Splits a key encoded with [`to_key`] into ID and payload.
-fn from_key(key: &[u8]) -> Result<(&str, &[u8])> {
+fn from_key(key: &[u8]) -> Result<InternalPayload> {
     // All information is stored in the key in which the ID and JSON formatted task
     // are separated by a `|`. So, take the key, then take the part after the `|`.
-    let sep_pos = key
+    let count_sep_pos = key.iter().position(|&byte| byte == b'#');
+    let payload_sep_pos = key
         .iter()
         .position(|&byte| byte == b'|')
         .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-    let id = str::from_utf8(&key[..sep_pos])
-        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
 
-    Ok((id, &key[sep_pos + 1..]))
+    let id_end_pos = match count_sep_pos {
+        Some(count_sep_pos) if count_sep_pos < payload_sep_pos => count_sep_pos,
+        _ => payload_sep_pos,
+    };
+    let _id = str::from_utf8(&key[..id_end_pos])
+        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
+    let num_receives = if let Some(count_sep_pos) = count_sep_pos {
+        let num_receives = std::str::from_utf8(&key[count_sep_pos..payload_sep_pos])
+            // FIXME
+            .unwrap()
+            .parse::<usize>()
+            .unwrap_or(1);
+        num_receives + 1
+    } else {
+        1
+    };
+
+    Ok(InternalPayload {
+        payload: key[payload_sep_pos + 1..].to_vec(),
+        num_receives,
+    })
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
@@ -627,6 +725,7 @@ pub struct RedisConsumer<M: ManageConnection> {
     consumer_name: String,
     payload_key: String,
     use_redis_streams: bool,
+    max_receives: usize,
     _background_tasks: Arc<JoinSet<Result<()>>>,
 }
 

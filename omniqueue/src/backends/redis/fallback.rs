@@ -9,7 +9,9 @@ use svix_ksuid::{KsuidLike as _, KsuidMs};
 use time::OffsetDateTime;
 use tracing::{error, trace};
 
-use super::{from_key, to_key, RawPayload, RedisConnection, RedisConsumer, RedisProducer};
+use super::{
+    from_key, to_key, InternalPayload, RawPayload, RedisConnection, RedisConsumer, RedisProducer,
+};
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
 pub(super) async fn send_raw<R: RedisConnection>(
@@ -65,7 +67,10 @@ async fn receive_with_timeout<R: RedisConnection>(
 }
 
 fn make_delivery<R: RedisConnection>(consumer: &RedisConsumer<R>, key: &[u8]) -> Result<Delivery> {
-    let (_, payload) = from_key(key)?;
+    let InternalPayload {
+        payload,
+        num_receives,
+    } = from_key(key)?;
 
     Ok(Delivery::new(
         payload.to_owned(),
@@ -196,6 +201,10 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 }
 
 fn regenerate_key(key: &[u8]) -> Result<RawPayload> {
-    let (_, payload) = from_key(key)?;
-    Ok(to_key(payload))
+    let InternalPayload {
+        payload,
+        num_receives,
+    } = from_key(key)?;
+    // let (_, payload) = from_key(key)?;
+    Ok(to_key(&payload))
 }
