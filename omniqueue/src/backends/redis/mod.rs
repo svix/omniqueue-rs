@@ -37,11 +37,11 @@ use std::{
     str,
     sync::Arc,
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
-    usize,
 };
 
 use bb8::ManageConnection;
 pub use bb8_redis::RedisConnectionManager;
+use fallback::RedisFallbackAcker;
 use redis::{streams::StreamId, AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use serde::Serialize;
 use streams::RedisStreamsAcker;
@@ -94,20 +94,60 @@ struct InternalPayload {
 }
 
 impl InternalPayload {
+    // This method is a bit goofy b/c incrementing `num_receives` is
+    // done when deserializing. This could also be broken into a separate
+    // method for clarity, but doing so may be more error-prone since
+    // it would need to be called everywhere this method is called:
+    fn from_list_item(payload: &[u8]) -> Result<Self> {
+        // All information is stored in the key in which the ID and the [optional]
+        // number of prior receives are separated by a `#`, and the JSON
+        // formatted task is delimited by a `|` So, take the key, then take the
+        // optional receive count, then take the part after the `|` to get the
+        // payload.
+        let count_sep_pos = payload.iter().position(|&byte| byte == b'#');
+        let payload_sep_pos = payload
+            .iter()
+            .position(|&byte| byte == b'|')
+            .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
+
+        let id_end_pos = match count_sep_pos {
+            Some(count_sep_pos) if count_sep_pos < payload_sep_pos => count_sep_pos,
+            _ => payload_sep_pos,
+        };
+        let _id = str::from_utf8(&payload[..id_end_pos])
+            .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
+
+        // This should be backward-compatible with messages that don't include
+        // `num_receives`
+        let num_receives = if let Some(count_sep_pos) = count_sep_pos {
+            let num_receives = std::str::from_utf8(&payload[(count_sep_pos + 1)..payload_sep_pos])
+                .map_err(|_| QueueError::Generic("Improper key format".into()))?
+                .parse::<usize>()
+                .map_err(|_| QueueError::Generic("Improper key format".into()))?;
+            num_receives + 1
+        } else {
+            1
+        };
+
+        Ok(Self {
+            payload: payload[payload_sep_pos + 1..].to_vec(),
+            num_receives,
+        })
+    }
+
+    // This method is a bit goofy b/c incrementing `num_receives` is
+    // done when deserializing. This could also be broken into a separate
+    // method for clarity, but doing so may be more error-prone since
+    // it would need to be called everywhere this method is called:
     fn from_stream_id(stream_id: &StreamId, payload_key: &str) -> Result<Self> {
         let StreamId { map, .. } = stream_id;
 
-        let num_receives = if let Some(raw_count) = map.get(NUM_RECEIVES) {
-            if let redis::Value::BulkString(data) = raw_count {
-                let count = std::str::from_utf8(data)
-                    // FIXME
-                    .unwrap()
-                    .parse::<usize>()
-                    .map_err(QueueError::generic)?;
-                count + 1
-            } else {
-                1
-            }
+        let num_receives = if let Some(redis::Value::BulkString(data)) = map.get(NUM_RECEIVES) {
+            let count = std::str::from_utf8(data)
+                .map_err(|_| QueueError::Generic("Improper key format".into()))?
+                .parse::<usize>()
+                .map_err(QueueError::generic)?;
+            count + 1
         } else {
             1
         };
@@ -123,7 +163,19 @@ impl InternalPayload {
         })
     }
 
-    fn to_redis_payload(self, payload_key: &str) -> Vec<(&str, Vec<u8>)> {
+    fn list_payload(&self) -> Vec<u8> {
+        let id = delayed_key_id();
+
+        let mut result = Vec::with_capacity(id.len() + self.payload.len() + 1);
+        result.extend(id.as_bytes());
+        result.push(b'#');
+        result.extend(self.num_receives.to_string().as_bytes());
+        result.push(b'|');
+        result.extend(&self.payload);
+        result
+    }
+
+    fn stream_payload(self, payload_key: &str) -> Vec<(&str, Vec<u8>)> {
         vec![
             (payload_key, self.payload),
             (
@@ -133,7 +185,7 @@ impl InternalPayload {
         ]
     }
 
-    fn to_stream_delivery<R: RedisConnection>(
+    fn into_stream_delivery<R: RedisConnection>(
         self,
         consumer: &RedisConsumer<R>,
         entry_id: String,
@@ -154,6 +206,28 @@ impl InternalPayload {
                 num_receives,
             },
         )
+    }
+
+    fn into_fallback_delivery<R: RedisConnection>(
+        self,
+        consumer: &RedisConsumer<R>,
+    ) -> Result<Delivery> {
+        let InternalPayload {
+            payload,
+            num_receives,
+        } = self;
+
+        Ok(Delivery::new(
+            payload.to_owned(),
+            RedisFallbackAcker {
+                redis: consumer.redis.clone(),
+                processing_queue_key: consumer.processing_queue_key.clone(),
+                key: payload.to_owned(),
+                already_acked_or_nacked: false,
+                max_receives: consumer.max_receives,
+                num_receives,
+            },
+        ))
     }
 }
 
@@ -479,6 +553,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.queue_key.to_owned(),
                 self.get_processing_queue_key(),
                 self.config.ack_deadline_ms,
+                self.config.max_receives.unwrap_or(usize::MAX),
             ));
         }
 
@@ -627,12 +702,17 @@ impl<R: RedisConnection> RedisProducer<R> {
     pub async fn send_raw_scheduled(&self, payload: &[u8], delay: Duration) -> Result<()> {
         let timestamp = unix_timestamp(SystemTime::now() + delay).map_err(QueueError::generic)?;
 
+        let payload = InternalPayload {
+            payload: payload.to_vec(),
+            num_receives: 0,
+        };
+
         let _: () = self
             .redis
             .get()
             .await
             .map_err(QueueError::generic)?
-            .zadd(&self.delayed_queue_key, to_key(payload), timestamp)
+            .zadd(&self.delayed_queue_key, payload.list_payload(), timestamp)
             .await
             .map_err(QueueError::generic)?;
 
@@ -669,52 +749,6 @@ fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
 /// - don't replace each other's "delivery due" timestamp.
 fn delayed_key_id() -> String {
     svix_ksuid::Ksuid::new(None, None).to_base62()
-}
-
-/// Prefixes a payload with an id, separated by a pipe, e.g `ID|payload`.
-fn to_key(payload: &[u8]) -> RawPayload {
-    let id = delayed_key_id();
-
-    let mut result = Vec::with_capacity(id.len() + payload.len() + 1);
-    result.extend(id.as_bytes());
-    result.push(b'#');
-    result.push(b'0');
-    result.push(b'|');
-    result.extend(payload);
-    result
-}
-
-/// Splits a key encoded with [`to_key`] into ID and payload.
-fn from_key(key: &[u8]) -> Result<InternalPayload> {
-    // All information is stored in the key in which the ID and JSON formatted task
-    // are separated by a `|`. So, take the key, then take the part after the `|`.
-    let count_sep_pos = key.iter().position(|&byte| byte == b'#');
-    let payload_sep_pos = key
-        .iter()
-        .position(|&byte| byte == b'|')
-        .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
-
-    let id_end_pos = match count_sep_pos {
-        Some(count_sep_pos) if count_sep_pos < payload_sep_pos => count_sep_pos,
-        _ => payload_sep_pos,
-    };
-    let _id = str::from_utf8(&key[..id_end_pos])
-        .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
-    let num_receives = if let Some(count_sep_pos) = count_sep_pos {
-        let num_receives = std::str::from_utf8(&key[count_sep_pos..payload_sep_pos])
-            // FIXME
-            .unwrap()
-            .parse::<usize>()
-            .unwrap_or(1);
-        num_receives + 1
-    } else {
-        1
-    };
-
-    Ok(InternalPayload {
-        payload: key[payload_sep_pos + 1..].to_vec(),
-        num_receives,
-    })
 }
 
 pub struct RedisConsumer<M: ManageConnection> {

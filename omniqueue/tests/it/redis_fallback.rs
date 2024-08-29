@@ -40,6 +40,7 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisKeyDrop) {
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 5_000,
+        max_receives: None,
     };
 
     (
