@@ -211,6 +211,7 @@ impl InternalPayload {
     fn into_fallback_delivery<R: RedisConnection>(
         self,
         consumer: &RedisConsumer<R>,
+        old_payload: &[u8],
     ) -> Result<Delivery> {
         let InternalPayload {
             payload,
@@ -222,7 +223,7 @@ impl InternalPayload {
             RedisFallbackAcker {
                 redis: consumer.redis.clone(),
                 processing_queue_key: consumer.processing_queue_key.clone(),
-                key: payload.to_owned(),
+                old_payload: old_payload.to_owned(),
                 already_acked_or_nacked: false,
                 max_receives: consumer.max_receives,
                 num_receives,

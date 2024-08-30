@@ -290,3 +290,53 @@ async fn test_pending() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn test_max_receives() {
+    let payload = ExType { a: 1 };
+
+    let queue_key: String = std::iter::repeat_with(fastrand::alphanumeric)
+        .take(8)
+        .collect();
+
+    let max_receives = 5;
+
+    let config = RedisConfig {
+        dsn: ROOT_URL.to_owned(),
+        max_connections: 8,
+        reinsert_on_nack: false,
+        queue_key: queue_key.clone(),
+        delayed_queue_key: format!("{queue_key}::delayed"),
+        delayed_lock_key: format!("{queue_key}::delayed_lock"),
+        consumer_group: "test_cg".to_owned(),
+        consumer_name: "test_cn".to_owned(),
+        payload_key: "payload".to_owned(),
+        ack_deadline_ms: 1,
+        max_receives: Some(max_receives),
+    };
+
+    let (builder, _drop) = (
+        RedisBackend::builder(config).use_redis_streams(false),
+        RedisKeyDrop(queue_key),
+    );
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    for _ in 0..max_receives {
+        let delivery = c.receive().await.unwrap();
+        assert_eq!(
+            Some(&payload),
+            delivery.payload_serde_json().unwrap().as_ref()
+        );
+    }
+
+    // Give this some time because the reenqueuing can sleep for up to 500ms
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let delivery = c
+        .receive_all(1, std::time::Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert!(delivery.is_empty());
+}

@@ -50,7 +50,7 @@ async fn receive_with_timeout<R: RedisConnection>(
     consumer: &RedisConsumer<R>,
     timeout: Duration,
 ) -> Result<Option<Delivery>> {
-    let key: Option<Vec<u8>> = consumer
+    let payload: Option<Vec<u8>> = consumer
         .redis
         .get()
         .await
@@ -66,15 +66,26 @@ async fn receive_with_timeout<R: RedisConnection>(
         .await
         .map_err(QueueError::generic)?;
 
-    key.and_then(|key| InternalPayload::from_list_item(&key).ok())
-        .map(|payload| payload.into_fallback_delivery(consumer))
+    payload
+        .and_then(|payload| {
+            if let Ok(new_payload) = InternalPayload::from_list_item(&payload) {
+                Some((payload, new_payload))
+            } else {
+                None
+            }
+        })
+        .map(|(old_payload, payload)| payload.into_fallback_delivery(consumer, &old_payload))
         .transpose()
 }
 
 pub(super) struct RedisFallbackAcker<M: ManageConnection> {
     pub(super) redis: bb8::Pool<M>,
     pub(super) processing_queue_key: String,
-    pub(super) key: RawPayload,
+    // We delete based on the payload -- and since the
+    // `num_receives` changes after receiving it's the
+    // `old_payload`, since `num_receives` is part of the
+    // payload. Make sense?
+    pub(super) old_payload: RawPayload,
 
     pub(super) already_acked_or_nacked: bool,
 
@@ -93,7 +104,7 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
             .get()
             .await
             .map_err(QueueError::generic)?
-            .lrem(&self.processing_queue_key, 1, &self.key)
+            .lrem(&self.processing_queue_key, 1, &self.old_payload)
             .await
             .map_err(QueueError::generic)?;
 
