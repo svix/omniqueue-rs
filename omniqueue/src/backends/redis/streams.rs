@@ -40,7 +40,7 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .xadd(
             &producer.queue_key,
             GENERATE_STREAM_ID,
-            &payload.stream_payload(&producer.payload_key),
+            &payload.into_stream_payload(&producer.payload_key),
         )
         .await
         .map_err(QueueError::generic)
@@ -178,7 +178,7 @@ pub(super) async fn add_to_main_queue(
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
-            &payload.stream_payload(payload_key),
+            &payload.into_stream_payload(payload_key),
         );
     }
 
@@ -283,7 +283,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
             let _ = pipe.xadd(
                 main_queue_name,
                 GENERATE_STREAM_ID,
-                &internal_payload.stream_payload(payload_key),
+                &internal_payload.into_stream_payload(payload_key),
             );
         }
 

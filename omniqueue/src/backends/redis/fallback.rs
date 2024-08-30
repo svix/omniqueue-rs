@@ -26,7 +26,7 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .get()
         .await
         .map_err(QueueError::generic)?
-        .lpush(&producer.queue_key, payload.list_payload())
+        .lpush(&producer.queue_key, payload.into_list_payload())
         .await
         .map_err(QueueError::generic)
 }
@@ -200,16 +200,16 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         for key in keys {
             if key <= validity_limit {
                 let payload = InternalPayload::from_list_item(&key)?;
-
-                let refreshed_key = payload.list_payload();
-                if payload.num_receives >= max_receives {
+                let num_receives = payload.num_receives;
+                let refreshed_key = payload.into_list_payload();
+                if num_receives >= max_receives {
                     trace!(
-                        num_receives = payload.num_receives,
+                        num_receives = num_receives,
                         "Maximum attempts reached for message, not reenqueuing",
                     );
                 } else {
                     trace!(
-                        num_receives = payload.num_receives,
+                        num_receives = num_receives,
                         "Pushing back overdue task to queue"
                     );
                     let _: () = conn.rpush(queue_key, &refreshed_key).await?;
@@ -228,5 +228,5 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 }
 
 fn regenerate_key(key: &[u8]) -> Result<RawPayload> {
-    Ok(InternalPayload::from_list_item(key)?.list_payload())
+    Ok(InternalPayload::from_list_item(key)?.into_list_payload())
 }

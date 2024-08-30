@@ -94,10 +94,11 @@ struct InternalPayload {
 }
 
 impl InternalPayload {
-    // This method is a bit goofy b/c incrementing `num_receives` is
-    // done when deserializing. This could also be broken into a separate
+    // This method is a bit goofy b/c `num_receives` is incremented
+    // when instantiated. This could also be broken into a separate
     // method for clarity, but doing so may be more error-prone since
-    // it would need to be called everywhere this method is called:
+    // the struct would need to be cloned and the increment method called
+    // everywhere this method is called:
     fn from_list_item(payload: &[u8]) -> Result<Self> {
         // All information is stored in the key in which the ID and the [optional]
         // number of prior receives are separated by a `#`, and the JSON
@@ -135,10 +136,10 @@ impl InternalPayload {
         })
     }
 
-    // This method is a bit goofy b/c incrementing `num_receives` is
-    // done when deserializing. This could also be broken into a separate
+    // This method is a bit goofy b/c `num_receives` is incremented
+    // when instantiated. This could also be broken into a separate
     // method for clarity, but doing so may be more error-prone since
-    // it would need to be called everywhere this method is called:
+    // it would need to be called most places this method is called:
     fn from_stream_id(stream_id: &StreamId, payload_key: &str) -> Result<Self> {
         let StreamId { map, .. } = stream_id;
 
@@ -163,19 +164,20 @@ impl InternalPayload {
         })
     }
 
-    fn list_payload(&self) -> Vec<u8> {
+    fn into_list_payload(mut self) -> Vec<u8> {
         let id = delayed_key_id();
-
-        let mut result = Vec::with_capacity(id.len() + self.payload.len() + 1);
+        let num_receives = self.num_receives.to_string();
+        let mut result =
+            Vec::with_capacity(id.len() + num_receives.as_bytes().len() + self.payload.len() + 3);
         result.extend(id.as_bytes());
         result.push(b'#');
-        result.extend(self.num_receives.to_string().as_bytes());
+        result.extend(num_receives.as_bytes());
         result.push(b'|');
-        result.extend(&self.payload);
+        result.append(&mut self.payload);
         result
     }
 
-    fn stream_payload(self, payload_key: &str) -> Vec<(&str, Vec<u8>)> {
+    fn into_stream_payload(self, payload_key: &str) -> Vec<(&str, Vec<u8>)> {
         vec![
             (payload_key, self.payload),
             (
@@ -713,7 +715,11 @@ impl<R: RedisConnection> RedisProducer<R> {
             .get()
             .await
             .map_err(QueueError::generic)?
-            .zadd(&self.delayed_queue_key, payload.list_payload(), timestamp)
+            .zadd(
+                &self.delayed_queue_key,
+                payload.into_list_payload(),
+                timestamp,
+            )
             .await
             .map_err(QueueError::generic)?;
 
