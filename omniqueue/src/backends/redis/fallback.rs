@@ -9,7 +9,10 @@ use svix_ksuid::{KsuidLike as _, KsuidMs};
 use time::OffsetDateTime;
 use tracing::{error, trace};
 
-use super::{from_key, to_key, RawPayload, RedisConnection, RedisConsumer, RedisProducer};
+use super::{
+    internal_from_list, internal_to_list_payload, InternalPayload, InternalPayloadOwned,
+    RawPayload, RedisConnection, RedisConsumer, RedisProducer,
+};
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
 pub(super) async fn send_raw<R: RedisConnection>(
@@ -21,7 +24,10 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .get()
         .await
         .map_err(QueueError::generic)?
-        .lpush(&producer.queue_key, to_key(payload))
+        .lpush(
+            &producer.queue_key,
+            internal_to_list_payload(InternalPayload(payload, 0)),
+        )
         .await
         .map_err(QueueError::generic)
 }
@@ -45,7 +51,7 @@ async fn receive_with_timeout<R: RedisConnection>(
     consumer: &RedisConsumer<R>,
     timeout: Duration,
 ) -> Result<Option<Delivery>> {
-    let key: Option<Vec<u8>> = consumer
+    let payload: Option<Vec<u8>> = consumer
         .redis
         .get()
         .await
@@ -61,19 +67,31 @@ async fn receive_with_timeout<R: RedisConnection>(
         .await
         .map_err(QueueError::generic)?;
 
-    key.map(|key| make_delivery(consumer, &key)).transpose()
+    match payload {
+        Some(old_payload) => Some(internal_to_delivery(
+            internal_from_list(&old_payload)?.into(),
+            consumer,
+            old_payload,
+        ))
+        .transpose(),
+        None => Ok(None),
+    }
 }
 
-fn make_delivery<R: RedisConnection>(consumer: &RedisConsumer<R>, key: &[u8]) -> Result<Delivery> {
-    let (_, payload) = from_key(key)?;
-
+fn internal_to_delivery<R: RedisConnection>(
+    InternalPayloadOwned(payload, num_receives): InternalPayloadOwned,
+    consumer: &RedisConsumer<R>,
+    old_payload: Vec<u8>,
+) -> Result<Delivery> {
     Ok(Delivery::new(
-        payload.to_owned(),
+        payload,
         RedisFallbackAcker {
             redis: consumer.redis.clone(),
             processing_queue_key: consumer.processing_queue_key.clone(),
-            key: key.to_owned(),
+            old_payload,
             already_acked_or_nacked: false,
+            max_receives: consumer.max_receives,
+            num_receives,
         },
     ))
 }
@@ -81,9 +99,16 @@ fn make_delivery<R: RedisConnection>(consumer: &RedisConsumer<R>, key: &[u8]) ->
 struct RedisFallbackAcker<M: ManageConnection> {
     redis: bb8::Pool<M>,
     processing_queue_key: String,
-    key: RawPayload,
+    // We delete based on the payload -- and since the
+    // `num_receives` changes after receiving it's the
+    // `old_payload`, since `num_receives` is part of the
+    // payload. Make sense?
+    old_payload: RawPayload,
 
     already_acked_or_nacked: bool,
+
+    max_receives: usize,
+    num_receives: usize,
 }
 
 impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
@@ -97,7 +122,7 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
             .get()
             .await
             .map_err(QueueError::generic)?
-            .lrem(&self.processing_queue_key, 1, &self.key)
+            .lrem(&self.processing_queue_key, 1, &self.old_payload)
             .await
             .map_err(QueueError::generic)?;
 
@@ -107,6 +132,11 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
     }
 
     async fn nack(&mut self) -> Result<()> {
+        if self.num_receives >= self.max_receives {
+            trace!("Maximum attempts reached");
+            return self.ack().await;
+        }
+
         if self.already_acked_or_nacked {
             return Err(QueueError::CannotAckOrNackTwice);
         }
@@ -144,13 +174,19 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
     queue_key: String,
     processing_queue_key: String,
     ack_deadline_ms: i64,
+    max_receives: usize,
 ) -> Result<()> {
     // FIXME: ack_deadline_ms should be unsigned
     let ack_deadline = Duration::from_millis(ack_deadline_ms as _);
     loop {
-        if let Err(err) =
-            reenqueue_timed_out_messages(&pool, &queue_key, &processing_queue_key, ack_deadline)
-                .await
+        if let Err(err) = reenqueue_timed_out_messages(
+            &pool,
+            &queue_key,
+            &processing_queue_key,
+            ack_deadline,
+            max_receives,
+        )
+        .await
         {
             error!("{err}");
             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -164,6 +200,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
     queue_key: &str,
     processing_queue_key: &str,
     ack_deadline: Duration,
+    max_receives: usize,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const BATCH_SIZE: isize = 50;
 
@@ -180,10 +217,24 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         let keys: Vec<RawPayload> = conn.lrange(processing_queue_key, 0, BATCH_SIZE).await?;
         for key in keys {
             if key <= validity_limit {
+                let internal = internal_from_list(&key)?;
+                let num_receives = internal.1;
+                if num_receives >= max_receives {
+                    trace!(
+                        num_receives = num_receives,
+                        "Maximum attempts reached for message, not reenqueuing",
+                    );
+                } else {
+                    trace!(
+                        num_receives = num_receives,
+                        "Pushing back overdue task to queue"
+                    );
+                    let _: () = conn
+                        .rpush(queue_key, internal_to_list_payload(internal))
+                        .await?;
+                }
+
                 // We use LREM to be sure we only delete the keys we should be deleting
-                trace!("Pushing back overdue task to queue");
-                let refreshed_key = regenerate_key(&key)?;
-                let _: () = conn.rpush(queue_key, &refreshed_key).await?;
                 let _: () = conn.lrem(processing_queue_key, 1, &key).await?;
             }
         }
@@ -196,6 +247,5 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 }
 
 fn regenerate_key(key: &[u8]) -> Result<RawPayload> {
-    let (_, payload) = from_key(key)?;
-    Ok(to_key(payload))
+    Ok(internal_to_list_payload(internal_from_list(key)?))
 }
