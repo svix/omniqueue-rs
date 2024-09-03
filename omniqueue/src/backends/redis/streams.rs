@@ -12,7 +12,8 @@ use redis::{
 use tracing::{error, trace};
 
 use super::{
-    internal_from_list, InternalPayloadOwned, RedisConnection, RedisConsumer, RedisProducer,
+    internal_from_list, InternalPayload, InternalPayloadOwned, RedisConnection, RedisConsumer,
+    RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
@@ -27,10 +28,10 @@ const LISTEN_STREAM_ID: &str = ">";
 const PENDING_BATCH_SIZE: usize = 1000;
 
 macro_rules! internal_to_stream_payload {
-    (($payload:expr, $num_receives:expr), $payload_key:expr) => {
+    ($internal_payload:expr, $payload_key:expr) => {
         &[
-            ($payload_key, $payload),
-            (NUM_RECEIVES, $num_receives.to_string().as_bytes()),
+            ($payload_key, $internal_payload.0),
+            (NUM_RECEIVES, $internal_payload.1.to_string().as_bytes()),
         ]
     };
 }
@@ -136,15 +137,14 @@ fn internal_from_stream(stream_id: &StreamId, payload_key: &str) -> Result<Inter
         .ok_or(QueueError::NoData)
         .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
 
-    Ok((payload, num_receives))
+    Ok(InternalPayloadOwned(payload, num_receives))
 }
 
 fn internal_to_delivery<R: RedisConnection>(
-    internal: InternalPayloadOwned,
+    InternalPayloadOwned(payload, num_receives): InternalPayloadOwned,
     consumer: &RedisConsumer<R>,
     entry_id: String,
 ) -> Delivery {
-    let (payload, num_receives) = internal;
     Delivery::new(
         payload,
         RedisStreamsAcker {
@@ -159,15 +159,15 @@ fn internal_to_delivery<R: RedisConnection>(
     )
 }
 
-pub(super) struct RedisStreamsAcker<M: ManageConnection> {
-    pub(super) redis: bb8::Pool<M>,
-    pub(super) queue_key: String,
-    pub(super) consumer_group: String,
-    pub(super) entry_id: String,
+struct RedisStreamsAcker<M: ManageConnection> {
+    redis: bb8::Pool<M>,
+    queue_key: String,
+    consumer_group: String,
+    entry_id: String,
 
-    pub(super) already_acked_or_nacked: bool,
-    pub(super) max_receives: usize,
-    pub(super) num_receives: usize,
+    already_acked_or_nacked: bool,
+    max_receives: usize,
+    num_receives: usize,
 }
 
 impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
@@ -223,7 +223,7 @@ pub(super) async fn add_to_main_queue(
     for key in keys {
         // We don't care about `num_receives` here since we're
         // re-queuing from delayed queue:
-        let (payload, _) = internal_from_list(key)?;
+        let InternalPayload(payload, _) = internal_from_list(key)?;
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
@@ -319,7 +319,8 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
         // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
         for stream_id in &ids {
-            let (payload, num_receives) = internal_from_stream(stream_id, payload_key)?;
+            let InternalPayloadOwned(payload, num_receives) =
+                internal_from_stream(stream_id, payload_key)?;
             if num_receives >= max_receives {
                 trace!(
                     entry_id = stream_id.id,

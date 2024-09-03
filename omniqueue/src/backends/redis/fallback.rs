@@ -10,8 +10,8 @@ use time::OffsetDateTime;
 use tracing::{error, trace};
 
 use super::{
-    internal_from_list, internal_to_list_payload, InternalPayloadOwned, RawPayload,
-    RedisConnection, RedisConsumer, RedisProducer,
+    internal_from_list, internal_to_list_payload, InternalPayload, InternalPayloadOwned,
+    RawPayload, RedisConnection, RedisConsumer, RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
@@ -24,7 +24,10 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .get()
         .await
         .map_err(QueueError::generic)?
-        .lpush(&producer.queue_key, internal_to_list_payload((payload, 0)))
+        .lpush(
+            &producer.queue_key,
+            internal_to_list_payload(InternalPayload(payload, 0)),
+        )
         .await
         .map_err(QueueError::generic)
 }
@@ -65,25 +68,21 @@ async fn receive_with_timeout<R: RedisConnection>(
         .map_err(QueueError::generic)?;
 
     match payload {
-        Some(old_payload) => {
-            let (payload, num_receives) = internal_from_list(&old_payload)?;
-            Some(internal_to_delivery(
-                (payload.to_vec(), num_receives),
-                consumer,
-                old_payload,
-            ))
-            .transpose()
-        }
+        Some(old_payload) => Some(internal_to_delivery(
+            internal_from_list(&old_payload)?.into(),
+            consumer,
+            old_payload,
+        ))
+        .transpose(),
         None => Ok(None),
     }
 }
 
 fn internal_to_delivery<R: RedisConnection>(
-    internal: InternalPayloadOwned,
+    InternalPayloadOwned(payload, num_receives): InternalPayloadOwned,
     consumer: &RedisConsumer<R>,
     old_payload: Vec<u8>,
 ) -> Result<Delivery> {
-    let (payload, num_receives) = internal;
     Ok(Delivery::new(
         payload,
         RedisFallbackAcker {
@@ -97,19 +96,19 @@ fn internal_to_delivery<R: RedisConnection>(
     ))
 }
 
-pub(super) struct RedisFallbackAcker<M: ManageConnection> {
-    pub(super) redis: bb8::Pool<M>,
-    pub(super) processing_queue_key: String,
+struct RedisFallbackAcker<M: ManageConnection> {
+    redis: bb8::Pool<M>,
+    processing_queue_key: String,
     // We delete based on the payload -- and since the
     // `num_receives` changes after receiving it's the
     // `old_payload`, since `num_receives` is part of the
     // payload. Make sense?
-    pub(super) old_payload: RawPayload,
+    old_payload: RawPayload,
 
-    pub(super) already_acked_or_nacked: bool,
+    already_acked_or_nacked: bool,
 
-    pub(super) max_receives: usize,
-    pub(super) num_receives: usize,
+    max_receives: usize,
+    num_receives: usize,
 }
 
 impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {

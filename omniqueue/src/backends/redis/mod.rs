@@ -88,11 +88,17 @@ impl RedisConnection for RedisClusterConnectionManager {
 // First element is the raw payload slice, second
 // is `num_receives`, the number of the times
 // the message has previously been received.
-type InternalPayload<'a> = (&'a [u8], usize);
+struct InternalPayload<'a>(&'a [u8], usize);
 
 // The same as `InternalPayload` but with an
 // owned payload.
-type InternalPayloadOwned = (Vec<u8>, usize);
+struct InternalPayloadOwned(Vec<u8>, usize);
+
+impl From<InternalPayload<'_>> for InternalPayloadOwned {
+    fn from(InternalPayload(payload, num_receives): InternalPayload) -> Self {
+        Self(payload.to_vec(), num_receives)
+    }
+}
 
 fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
     // All information is stored in the key in which the ID and the [optional]
@@ -125,12 +131,14 @@ fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
         1
     };
 
-    Ok((&payload[payload_sep_pos + 1..], num_receives))
+    Ok(InternalPayload(
+        &payload[payload_sep_pos + 1..],
+        num_receives,
+    ))
 }
 
-fn internal_to_list_payload(internal: InternalPayload) -> Vec<u8> {
+fn internal_to_list_payload(InternalPayload(payload, num_receives): InternalPayload) -> Vec<u8> {
     let id = delayed_key_id();
-    let (payload, num_receives) = internal;
     let num_receives = num_receives.to_string();
     let mut result =
         Vec::with_capacity(id.len() + num_receives.as_bytes().len() + payload.len() + 3);
@@ -620,7 +628,7 @@ impl<R: RedisConnection> RedisProducer<R> {
             .map_err(QueueError::generic)?
             .zadd(
                 &self.delayed_queue_key,
-                internal_to_list_payload((payload, 0)),
+                internal_to_list_payload(InternalPayload(payload, 0)),
                 timestamp,
             )
             .await
