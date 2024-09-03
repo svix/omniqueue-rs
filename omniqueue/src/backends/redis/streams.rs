@@ -5,15 +5,16 @@ use std::time::Duration;
 use bb8::ManageConnection;
 use redis::{
     streams::{
-        StreamAutoClaimOptions, StreamClaimReply, StreamId, StreamReadOptions, StreamReadReply,
+        StreamAutoClaimOptions, StreamClaimReply, StreamId, StreamRangeReply, StreamReadOptions,
+        StreamReadReply,
     },
     AsyncCommands as _, FromRedisValue, RedisResult,
 };
 use tracing::{error, trace};
 
 use super::{
-    internal_from_list, InternalPayload, InternalPayloadOwned, RedisConnection, RedisConsumer,
-    RedisProducer,
+    internal_from_list, DeadLetterQueueConfig, InternalPayload, InternalPayloadOwned,
+    RedisConnection, RedisConsumer, RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
@@ -30,8 +31,11 @@ const PENDING_BATCH_SIZE: usize = 1000;
 macro_rules! internal_to_stream_payload {
     ($internal_payload:expr, $payload_key:expr) => {
         &[
-            ($payload_key, $internal_payload.0),
-            (NUM_RECEIVES, $internal_payload.1.to_string().as_bytes()),
+            ($payload_key, $internal_payload.payload()),
+            (
+                NUM_RECEIVES,
+                $internal_payload.num_receives().to_string().as_bytes(),
+            ),
         ]
     };
 }
@@ -48,7 +52,7 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .xadd(
             &producer.queue_key,
             GENERATE_STREAM_ID,
-            internal_to_stream_payload!((payload, 0), producer.payload_key.as_str()),
+            internal_to_stream_payload!(InternalPayload(payload, 0), producer.payload_key.as_str()),
         )
         .await
         .map_err(QueueError::generic)
@@ -153,8 +157,9 @@ fn internal_to_delivery<R: RedisConnection>(
             consumer_group: consumer.consumer_group.to_owned(),
             entry_id,
             already_acked_or_nacked: false,
-            max_receives: consumer.max_receives,
             num_receives,
+            dlq_config: consumer.dlq_config.clone(),
+            payload_key: consumer.payload_key.clone(),
         },
     )
 }
@@ -164,11 +169,14 @@ struct RedisStreamsAcker<M: ManageConnection> {
     queue_key: String,
     consumer_group: String,
     entry_id: String,
+    payload_key: String,
 
     already_acked_or_nacked: bool,
-    max_receives: usize,
     num_receives: usize,
+    dlq_config: Option<DeadLetterQueueConfig>,
 }
+
+impl<R: RedisConnection> RedisStreamsAcker<R> {}
 
 impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
     async fn ack(&mut self) -> Result<()> {
@@ -192,9 +200,19 @@ impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
     }
 
     async fn nack(&mut self) -> Result<()> {
-        if self.num_receives >= self.max_receives {
-            trace!(entry_id = self.entry_id, "Maximum attempts reached");
-            return self.ack().await;
+        if let Some(dlq_config) = &self.dlq_config {
+            if dlq_config.max_retries_reached(self.num_receives) {
+                trace!(entry_id = self.entry_id, "Maximum attempts reached");
+                send_to_dlq(
+                    &self.redis,
+                    &self.queue_key,
+                    dlq_config,
+                    &self.entry_id,
+                    &self.payload_key,
+                )
+                .await?;
+                return self.ack().await;
+            }
         }
 
         if self.already_acked_or_nacked {
@@ -227,7 +245,7 @@ pub(super) async fn add_to_main_queue(
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
-            internal_to_stream_payload!((payload, 0), payload_key),
+            internal_to_stream_payload!(InternalPayload(payload, 0), payload_key),
         );
     }
 
@@ -265,8 +283,8 @@ pub(super) async fn background_task_pending<R: RedisConnection>(
     consumer_group: String,
     consumer_name: String,
     ack_deadline_ms: i64,
-    max_receives: usize,
     payload_key: String,
+    dlq_config: Option<DeadLetterQueueConfig>,
 ) -> Result<()> {
     loop {
         if let Err(err) = reenqueue_timed_out_messages(
@@ -275,8 +293,8 @@ pub(super) async fn background_task_pending<R: RedisConnection>(
             &consumer_group,
             &consumer_name,
             ack_deadline_ms,
-            max_receives,
             &payload_key,
+            &dlq_config,
         )
         .await
         {
@@ -287,14 +305,53 @@ pub(super) async fn background_task_pending<R: RedisConnection>(
     }
 }
 
+// In order to put it in the DLQ, we first have to get the payload
+// from the original message, then push it onto the list. An
+// alternative would be to store the full payload on the `Acker` as
+// we do with the fallback implementation, but it seems good to
+// avoid the additional memory utilization if possible.
+async fn send_to_dlq<R: RedisConnection>(
+    redis: &bb8::Pool<R>,
+    main_queue_key: &str,
+    dlq_config: &DeadLetterQueueConfig,
+    entry_id: &str,
+    payload_key: &str,
+) -> Result<()> {
+    let DeadLetterQueueConfig { queue_key: dlq, .. } = dlq_config;
+    let StreamRangeReply { ids, .. } = redis
+        .get()
+        .await
+        .map_err(QueueError::generic)?
+        .xrange(main_queue_key, entry_id, entry_id)
+        .await
+        .map_err(QueueError::generic)?;
+
+    let payload = ids.first().take().ok_or_else(|| QueueError::NoData)?;
+    let payload: Vec<u8> = payload
+        .map
+        .get(payload_key)
+        .ok_or(QueueError::NoData)
+        .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
+
+    let _: () = redis
+        .get()
+        .await
+        .map_err(QueueError::generic)?
+        .lpush(dlq, &payload)
+        .await
+        .map_err(QueueError::generic)?;
+
+    Ok(())
+}
+
 async fn reenqueue_timed_out_messages<R: RedisConnection>(
     pool: &bb8::Pool<R>,
     main_queue_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     ack_deadline_ms: i64,
-    max_receives: usize,
     payload_key: &str,
+    dlq_config: &Option<DeadLetterQueueConfig>,
 ) -> Result<()> {
     let mut conn = pool.get().await.map_err(QueueError::generic)?;
 
@@ -321,18 +378,31 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         for stream_id in &ids {
             let InternalPayloadOwned(payload, num_receives) =
                 internal_from_stream(stream_id, payload_key)?;
-            if num_receives >= max_receives {
-                trace!(
-                    entry_id = stream_id.id,
-                    "Maximum attempts reached for message, not reenqueuing",
-                );
-                continue;
-            }
 
+            if let Some(dlq_config) = &dlq_config {
+                if num_receives >= dlq_config.max_receives {
+                    trace!(
+                        entry_id = stream_id.id,
+                        "Maximum attempts reached for message, sending to DLQ",
+                    );
+                    send_to_dlq(
+                        pool,
+                        main_queue_name,
+                        dlq_config,
+                        &stream_id.id,
+                        payload_key,
+                    )
+                    .await?;
+                    continue;
+                }
+            }
             let _ = pipe.xadd(
                 main_queue_name,
                 GENERATE_STREAM_ID,
-                internal_to_stream_payload!((payload.as_slice(), num_receives), payload_key),
+                internal_to_stream_payload!(
+                    InternalPayload(payload.as_slice(), num_receives),
+                    payload_key
+                ),
             );
         }
 

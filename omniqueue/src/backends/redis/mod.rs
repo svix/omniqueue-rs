@@ -90,6 +90,16 @@ impl RedisConnection for RedisClusterConnectionManager {
 // the message has previously been received.
 struct InternalPayload<'a>(&'a [u8], usize);
 
+impl<'a> InternalPayload<'a> {
+    fn payload(&self) -> &[u8] {
+        self.0
+    }
+
+    fn num_receives(&self) -> usize {
+        self.1
+    }
+}
+
 // The same as `InternalPayload` but with an
 // owned payload.
 struct InternalPayloadOwned(Vec<u8>, usize);
@@ -204,7 +214,23 @@ pub struct RedisConfig {
     pub consumer_name: String,
     pub payload_key: String,
     pub ack_deadline_ms: i64,
-    pub max_receives: Option<usize>,
+    pub dlq_config: Option<DeadLetterQueueConfig>,
+}
+
+#[derive(Clone)]
+pub struct DeadLetterQueueConfig {
+    // The name of the deadletter queue, which is a simple
+    // list data type.
+    pub queue_key: String,
+    /// The number of times a message may be received before
+    /// being sent to the deadletter queue.
+    pub max_receives: usize,
+}
+
+impl DeadLetterQueueConfig {
+    fn max_retries_reached(&self, num_receives: usize) -> bool {
+        num_receives >= self.max_receives
+    }
 }
 
 pub struct RedisBackend<R = RedisConnectionManager>(PhantomData<R>);
@@ -356,7 +382,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 payload_key: self.config.payload_key,
                 use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
-                max_receives: self.config.max_receives.unwrap_or(usize::MAX),
+                dlq_config: self.config.dlq_config.clone(),
             },
         ))
     }
@@ -399,8 +425,8 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             consumer_name: self.config.consumer_name,
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
-            max_receives: self.config.max_receives.unwrap_or(usize::MAX),
             _background_tasks,
+            dlq_config: self.config.dlq_config.clone(),
         })
     }
 
@@ -463,8 +489,8 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.consumer_group.to_owned(),
                 self.config.consumer_name.to_owned(),
                 self.config.ack_deadline_ms,
-                self.config.max_receives.unwrap_or(usize::MAX),
                 self.config.payload_key.to_owned(),
+                self.config.dlq_config.clone(),
             ));
         } else {
             join_set.spawn(fallback::background_task_processing(
@@ -472,7 +498,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.queue_key.to_owned(),
                 self.get_processing_queue_key(),
                 self.config.ack_deadline_ms,
-                self.config.max_receives.unwrap_or(usize::MAX),
+                self.config.dlq_config.clone(),
             ));
         }
 
@@ -677,8 +703,8 @@ pub struct RedisConsumer<M: ManageConnection> {
     consumer_name: String,
     payload_key: String,
     use_redis_streams: bool,
-    max_receives: usize,
     _background_tasks: Arc<JoinSet<Result<()>>>,
+    dlq_config: Option<DeadLetterQueueConfig>,
 }
 
 impl<R: RedisConnection> RedisConsumer<R> {

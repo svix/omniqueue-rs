@@ -7,11 +7,11 @@ use bb8::ManageConnection;
 use redis::AsyncCommands;
 use svix_ksuid::{KsuidLike as _, KsuidMs};
 use time::OffsetDateTime;
-use tracing::{error, trace};
+use tracing::{error, trace, warn};
 
 use super::{
-    internal_from_list, internal_to_list_payload, InternalPayload, InternalPayloadOwned,
-    RawPayload, RedisConnection, RedisConsumer, RedisProducer,
+    internal_from_list, internal_to_list_payload, DeadLetterQueueConfig, InternalPayload,
+    InternalPayloadOwned, RawPayload, RedisConnection, RedisConsumer, RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
@@ -90,8 +90,8 @@ fn internal_to_delivery<R: RedisConnection>(
             processing_queue_key: consumer.processing_queue_key.clone(),
             old_payload,
             already_acked_or_nacked: false,
-            max_receives: consumer.max_receives,
             num_receives,
+            dlq_config: consumer.dlq_config.clone(),
         },
     ))
 }
@@ -107,8 +107,8 @@ struct RedisFallbackAcker<M: ManageConnection> {
 
     already_acked_or_nacked: bool,
 
-    max_receives: usize,
     num_receives: usize,
+    dlq_config: Option<DeadLetterQueueConfig>,
 }
 
 impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
@@ -132,9 +132,22 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
     }
 
     async fn nack(&mut self) -> Result<()> {
-        if self.num_receives >= self.max_receives {
-            trace!("Maximum attempts reached");
-            return self.ack().await;
+        if let Some(dlq_config) = &self.dlq_config {
+            if dlq_config.max_retries_reached(self.num_receives) {
+                trace!("Maximum attempts reached");
+                // Try to get the raw payload, but if that fails (which
+                // seems possible given that we're already in a failure
+                // scenario), just push the full `InternalPayload` onto the DLQ:
+                let payload = match internal_from_list(&self.old_payload) {
+                    Ok(InternalPayload(payload, _)) => payload,
+                    Err(e) => {
+                        warn!(error = ?e, "Failed to get original payload, sending to DLQ with internal payload");
+                        &self.old_payload
+                    }
+                };
+                send_to_dlq(&self.redis, dlq_config, payload).await?;
+                return self.ack().await;
+            }
         }
 
         if self.already_acked_or_nacked {
@@ -174,7 +187,7 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
     queue_key: String,
     processing_queue_key: String,
     ack_deadline_ms: i64,
-    max_receives: usize,
+    dlq_config: Option<DeadLetterQueueConfig>,
 ) -> Result<()> {
     // FIXME: ack_deadline_ms should be unsigned
     let ack_deadline = Duration::from_millis(ack_deadline_ms as _);
@@ -184,7 +197,7 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
             &queue_key,
             &processing_queue_key,
             ack_deadline,
-            max_receives,
+            &dlq_config,
         )
         .await
         {
@@ -195,12 +208,30 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
     }
 }
 
+async fn send_to_dlq<R: RedisConnection>(
+    redis: &bb8::Pool<R>,
+    dlq_config: &DeadLetterQueueConfig,
+    payload: &[u8],
+) -> Result<()> {
+    let DeadLetterQueueConfig { queue_key: dlq, .. } = dlq_config;
+
+    let _: () = redis
+        .get()
+        .await
+        .map_err(QueueError::generic)?
+        .lpush(dlq, payload)
+        .await
+        .map_err(QueueError::generic)?;
+
+    Ok(())
+}
+
 async fn reenqueue_timed_out_messages<R: RedisConnection>(
     pool: &bb8::Pool<R>,
     queue_key: &str,
     processing_queue_key: &str,
     ack_deadline: Duration,
-    max_receives: usize,
+    dlq_config: &Option<DeadLetterQueueConfig>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const BATCH_SIZE: isize = 50;
 
@@ -218,20 +249,25 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         for key in keys {
             if key <= validity_limit {
                 let internal = internal_from_list(&key)?;
-                let num_receives = internal.1;
-                if num_receives >= max_receives {
-                    trace!(
-                        num_receives = num_receives,
-                        "Maximum attempts reached for message, not reenqueuing",
-                    );
-                } else {
-                    trace!(
-                        num_receives = num_receives,
-                        "Pushing back overdue task to queue"
-                    );
-                    let _: () = conn
-                        .rpush(queue_key, internal_to_list_payload(internal))
-                        .await?;
+                let num_receives = internal.num_receives();
+
+                match &dlq_config {
+                    Some(dlq_config) if dlq_config.max_retries_reached(num_receives) => {
+                        trace!(
+                            num_receives = num_receives,
+                            "Maximum attempts reached for message, moving item to DLQ",
+                        );
+                        send_to_dlq(pool, dlq_config, internal.payload()).await?;
+                    }
+                    _ => {
+                        trace!(
+                            num_receives = num_receives,
+                            "Pushing back overdue task to queue"
+                        );
+                        let _: () = conn
+                            .rpush(queue_key, internal_to_list_payload(internal))
+                            .await?;
+                    }
                 }
 
                 // We use LREM to be sure we only delete the keys we should be deleting

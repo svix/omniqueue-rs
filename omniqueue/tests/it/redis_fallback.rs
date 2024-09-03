@@ -1,7 +1,13 @@
 use core::str;
-use std::time::{Duration, Instant};
+use std::{
+    num::NonZeroUsize,
+    time::{Duration, Instant},
+};
 
-use omniqueue::backends::{redis::RedisBackendBuilder, RedisBackend, RedisConfig};
+use omniqueue::backends::{
+    redis::{DeadLetterQueueConfig, RedisBackendBuilder},
+    RedisBackend, RedisConfig,
+};
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
 use svix_ksuid::KsuidLike;
@@ -42,7 +48,7 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisKeyDrop) {
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 5_000,
-        max_receives: None,
+        dlq_config: None,
     };
 
     (
@@ -294,10 +300,14 @@ async fn test_pending() {
 }
 
 #[tokio::test]
-async fn test_max_receives() {
+async fn test_deadletter_config() {
     let payload = ExType { a: 1 };
 
     let queue_key: String = std::iter::repeat_with(fastrand::alphanumeric)
+        .take(8)
+        .collect();
+
+    let dlq_key: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
 
@@ -314,7 +324,21 @@ async fn test_max_receives() {
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 1,
-        max_receives: Some(max_receives),
+        dlq_config: Some(DeadLetterQueueConfig {
+            queue_key: dlq_key.to_owned(),
+            max_receives,
+        }),
+    };
+
+    let check_dlq = |asserted_len: usize| {
+        let dlq_key = dlq_key.clone();
+        async move {
+            let client = Client::open(ROOT_URL).unwrap();
+            let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+            let mut res: Vec<String> = conn.lpop(&dlq_key, NonZeroUsize::new(100)).await.unwrap();
+            assert!(res.len() == asserted_len);
+            res.pop()
+        }
     };
 
     let (builder, _drop) = (
@@ -324,9 +348,11 @@ async fn test_max_receives() {
 
     let (p, mut c) = builder.build_pair().await.unwrap();
 
+    // Test send to DLQ via `ack_deadline_ms` expiration:
     p.send_serde_json(&payload).await.unwrap();
 
     for _ in 0..max_receives {
+        check_dlq(0).await;
         let delivery = c.receive().await.unwrap();
         assert_eq!(
             Some(&payload),
@@ -341,6 +367,39 @@ async fn test_max_receives() {
         .await
         .unwrap();
     assert!(delivery.is_empty());
+
+    // Expected message should be on DLQ:
+    let res = check_dlq(1).await;
+    assert_eq!(serde_json::to_string(&payload).unwrap(), res.unwrap());
+
+    /* This portion of test is flaky due to https://github.com/svix/omniqueue-rs/issues/102
+
+    // Test send to DLQ via explicit `nack`ing:
+    p.send_serde_json(&payload).await.unwrap();
+
+    for _ in 0..max_receives {
+        check_dlq(0).await;
+        let delivery = c.receive().await.unwrap();
+        assert_eq!(
+            Some(&payload),
+            delivery.payload_serde_json().unwrap().as_ref()
+        );
+        delivery.nack().await.unwrap();
+    }
+
+    // Give this some time because the reenqueuing can sleep for up to 500ms
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let delivery = c
+        .receive_all(1, std::time::Duration::from_millis(1))
+        .await
+        .unwrap();
+    assert!(delivery.is_empty());
+
+    // Expected message should be on DLQ:
+    let res = check_dlq(1).await;
+    assert_eq!(serde_json::to_string(&payload).unwrap(), res.unwrap());
+
+    */
 }
 
 // A message without a `num_receives` field shouldn't
@@ -363,8 +422,11 @@ async fn test_backward_compatible() {
         consumer_group: "test_cg".to_owned(),
         consumer_name: "test_cn".to_owned(),
         payload_key: "payload".to_owned(),
-        ack_deadline_ms: 1,
-        max_receives: Some(max_receives),
+        ack_deadline_ms: 20,
+        dlq_config: Some(DeadLetterQueueConfig {
+            queue_key: "dlq-key".to_owned(),
+            max_receives,
+        }),
     };
 
     let (builder, _drop) = (
