@@ -592,23 +592,31 @@ async fn background_task_delayed<R: RedisConnection>(
         let timestamp = unix_timestamp(SystemTime::now() - Duration::from_secs(1))
             .map_err(QueueError::generic)?;
 
-        let keys: Vec<RawPayload> = conn
+        let old_keys: Vec<RawPayload> = conn
             .zrangebyscore_limit(delayed_queue_name, 0, timestamp, 0, BATCH_SIZE)
             .await
             .map_err(QueueError::generic)?;
 
-        if !keys.is_empty() {
-            trace!("Moving {} messages from delayed to main queue", keys.len());
+        if !old_keys.is_empty() {
+            let new_keys = old_keys
+                .iter()
+                .map(|x| internal_from_list(x))
+                .collect::<Result<Vec<_>>>()?;
+            trace!(
+                "Moving {} messages from delayed to main queue",
+                new_keys.len()
+            );
 
             if use_redis_streams {
-                streams::add_to_main_queue(&keys, main_queue_name, payload_key, &mut *conn).await?;
+                streams::add_to_main_queue(new_keys, main_queue_name, payload_key, &mut *conn)
+                    .await?;
             } else {
-                fallback::add_to_main_queue(&keys, main_queue_name, &mut *conn).await?;
+                fallback::add_to_main_queue(new_keys, main_queue_name, &mut *conn).await?;
             }
 
             // Then remove the tasks from the delayed queue so they aren't resent
             let _: () = conn
-                .zrem(delayed_queue_name, keys)
+                .zrem(delayed_queue_name, old_keys)
                 .await
                 .map_err(QueueError::generic)?;
 

@@ -170,14 +170,18 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
 }
 
 pub(super) async fn add_to_main_queue(
-    keys: &[Vec<u8>],
+    keys: Vec<InternalPayload<'_>>,
     main_queue_name: &str,
     conn: &mut impl AsyncCommands,
 ) -> Result<()> {
+    // We don't care about existing `num_receives`
+    // since we're pushing onto a different queue.
     let new_keys = keys
-        .iter()
-        .map(|x| regenerate_key(x))
-        .collect::<Result<Vec<_>>>()?;
+        .into_iter()
+        // So reset it to avoid carrying state over:
+        .map(|x| InternalPayload::new(x.payload))
+        .map(internal_to_list_payload)
+        .collect::<Vec<_>>();
     let _: () = conn
         .lpush(main_queue_name, new_keys)
         .await
@@ -283,8 +287,4 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
     }
 
     Ok(())
-}
-
-fn regenerate_key(key: &[u8]) -> Result<RawPayload> {
-    Ok(internal_to_list_payload(internal_from_list(key)?))
 }
