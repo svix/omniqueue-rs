@@ -69,6 +69,9 @@ impl<P: ScheduledQueueProducer> ErasedQueueProducer for DynScheduledProducerInne
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move { self.inner.send_bytes(payload).await })
     }
+    fn redrive_dlq<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.inner.redrive_dlq().await })
+    }
 }
 
 impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledProducerInner<P> {
@@ -103,11 +106,15 @@ impl DynScheduledProducer {
         let payload = serde_json::to_vec(payload)?;
         self.0.send_raw_scheduled(&payload, delay).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        self.0.redrive_dlq().await
+    }
 }
 
 impl crate::QueueProducer for DynScheduledProducer {
     type Payload = Vec<u8>;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
 impl crate::ScheduledQueueProducer for DynScheduledProducer {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);

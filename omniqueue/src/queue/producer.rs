@@ -9,6 +9,8 @@ pub trait QueueProducer: Send + Sync + Sized {
 
     fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send;
 
+    fn redrive_dlq(&self) -> impl Future<Output = Result<()>> + Send;
+
     /// Send a batch of raw messages.
     ///
     /// The default implementation of this sends the payloads sequentially using
@@ -97,6 +99,8 @@ pub(crate) trait ErasedQueueProducer: Send + Sync {
         &'a self,
         payload: &'a [u8],
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
+
+    fn redrive_dlq<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 }
 
 struct DynProducerInner<P> {
@@ -110,6 +114,10 @@ impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move { self.inner.send_bytes(payload).await })
     }
+
+    fn redrive_dlq<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move { self.inner.redrive_dlq().await })
+    }
 }
 
 impl DynProducer {
@@ -121,9 +129,13 @@ impl DynProducer {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw(&payload).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        self.0.redrive_dlq().await
+    }
 }
 
 impl crate::QueueProducer for DynProducer {
     type Payload = Vec<u8>;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }

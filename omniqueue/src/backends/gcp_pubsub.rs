@@ -166,6 +166,12 @@ impl GcpPubSubProducer {
     pub async fn send_serde_json<P: Serialize + Sync>(&self, payload: &P) -> Result<()> {
         self.send_raw(&serde_json::to_vec(&payload)?).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "redrive_dlq is not supported by GcpPubSubBackend",
+        ))
+    }
 }
 
 impl std::fmt::Debug for GcpPubSubProducer {
@@ -178,7 +184,7 @@ impl std::fmt::Debug for GcpPubSubProducer {
 
 impl crate::QueueProducer for GcpPubSubProducer {
     type Payload = Payload;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 
     /// This method is overwritten for the Google Cloud Pub/Sub backend to be
     /// more efficient than the default of sequentially publishing `payloads`.
