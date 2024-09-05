@@ -202,11 +202,17 @@ impl RabbitMqProducer {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw_scheduled(&payload, delay).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "redrive_dlq is not supported by RabbitMqBackend",
+        ))
+    }
 }
 
 impl crate::QueueProducer for RabbitMqProducer {
     type Payload = Vec<u8>;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
 impl crate::ScheduledQueueProducer for RabbitMqProducer {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);

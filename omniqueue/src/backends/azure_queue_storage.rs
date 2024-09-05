@@ -133,11 +133,17 @@ impl AqsProducer {
         let payload = serde_json::to_string(payload)?;
         self.send_raw_scheduled(&payload, delay).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "redrive_dlq is not supported by AqsBackend",
+        ))
+    }
 }
 
 impl crate::QueueProducer for AqsProducer {
     type Payload = String;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
 impl crate::ScheduledQueueProducer for AqsProducer {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);

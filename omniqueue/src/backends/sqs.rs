@@ -355,11 +355,17 @@ impl SqsProducer {
 
         Ok(())
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        Err(QueueError::Unsupported(
+            "redrive_dlq is not supported by SqsBackend",
+        ))
+    }
 }
 
 impl crate::QueueProducer for SqsProducer {
     type Payload = String;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 
     /// This method is overwritten for the SQS backend to be more efficient
     /// than the default of sequentially publishing `payloads`.

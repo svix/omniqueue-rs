@@ -53,6 +53,15 @@ macro_rules! omni_delegate {
             Self::send_serde_json_scheduled(self, payload, delay)
         }
     };
+    ( redrive_dlq ) => {
+        #[deny(unconditional_recursion)] // method call must defer to an inherent method
+        fn redrive_dlq(
+            &self,
+        ) -> impl std::future::Future<Output = Result<()>> + Send {
+            Self::redrive_dlq(self)
+        }
+    };
+
     ( $method1:ident, $($rest:ident),* $(,)? ) => {
         omni_delegate!($method1);
         omni_delegate!($($rest),*);

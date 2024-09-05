@@ -226,7 +226,7 @@ async fn send_to_dlq<R: RedisConnection>(
         .get()
         .await
         .map_err(QueueError::generic)?
-        .lpush(dlq, payload)
+        .rpush(dlq, payload)
         .await
         .map_err(QueueError::generic)?;
 

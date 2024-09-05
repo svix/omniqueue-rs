@@ -46,7 +46,7 @@ use serde::Serialize;
 use svix_ksuid::KsuidLike;
 use thiserror::Error;
 use tokio::task::JoinSet;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 #[allow(deprecated)]
 use crate::{
@@ -390,6 +390,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 payload_key: self.config.payload_key.clone(),
                 use_redis_streams: self.use_redis_streams,
                 _background_tasks: background_tasks.clone(),
+                dlq_config: self.config.dlq_config.clone(),
             },
             RedisConsumer {
                 redis,
@@ -421,6 +422,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
             _background_tasks,
+            dlq_config: self.config.dlq_config,
         })
     }
 
@@ -444,7 +446,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
             _background_tasks,
-            dlq_config: self.config.dlq_config.clone(),
+            dlq_config: self.config.dlq_config,
         })
     }
 
@@ -644,6 +646,7 @@ pub struct RedisProducer<M: ManageConnection> {
     payload_key: String,
     use_redis_streams: bool,
     _background_tasks: Arc<JoinSet<Result<()>>>,
+    dlq_config: Option<DeadLetterQueueConfig>,
 }
 
 impl<R: RedisConnection> RedisProducer<R> {
@@ -698,11 +701,61 @@ impl<R: RedisConnection> RedisProducer<R> {
         let payload = serde_json::to_vec(payload)?;
         self.send_raw_scheduled(&payload, delay).await
     }
+
+    pub async fn redrive_dlq(&self) -> Result<()> {
+        const BATCH_SIZE: isize = 50;
+
+        let DeadLetterQueueConfig { queue_key: dlq, .. } = self
+            .dlq_config
+            .as_ref()
+            .ok_or(QueueError::Unsupported("Missing DeadLetterQueueConfig"))?;
+
+        loop {
+            let mut conn = self.redis.get().await.map_err(QueueError::generic)?;
+            let old_payloads: Vec<RawPayload> = conn
+                .lrange(dlq, 0, BATCH_SIZE)
+                .await
+                .map_err(QueueError::generic)?;
+
+            if old_payloads.is_empty() {
+                break;
+            }
+
+            let new_payloads = old_payloads
+                .iter()
+                .map(|x| InternalPayload::new(x))
+                .collect::<Vec<_>>();
+
+            if self.use_redis_streams {
+                streams::add_to_main_queue(
+                    new_payloads,
+                    &self.queue_key,
+                    &self.payload_key,
+                    &mut *conn,
+                )
+                .await?;
+            } else {
+                // This may fail if messages in the key are not in their original raw format.
+                fallback::add_to_main_queue(new_payloads, &self.queue_key, &mut *conn).await?;
+            }
+
+            let payload_len = old_payloads.len();
+            for payload in old_payloads {
+                let _: () = conn
+                    .lrem(dlq, 1, &payload)
+                    .await
+                    .map_err(QueueError::generic)?;
+            }
+            info!("Moved {payload_len} items from deadletter queue to main queue");
+        }
+
+        Ok(())
+    }
 }
 
 impl<R: RedisConnection> crate::QueueProducer for RedisProducer<R> {
     type Payload = Vec<u8>;
-    omni_delegate!(send_raw, send_serde_json);
+    omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
 impl<R: RedisConnection> crate::ScheduledQueueProducer for RedisProducer<R> {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
