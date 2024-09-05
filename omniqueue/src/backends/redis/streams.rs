@@ -31,10 +31,10 @@ const PENDING_BATCH_SIZE: usize = 1000;
 macro_rules! internal_to_stream_payload {
     ($internal_payload:expr, $payload_key:expr) => {
         &[
-            ($payload_key, $internal_payload.payload()),
+            ($payload_key, $internal_payload.payload),
             (
                 NUM_RECEIVES,
-                $internal_payload.num_receives().to_string().as_bytes(),
+                $internal_payload.num_receives.to_string().as_bytes(),
             ),
         ]
     };
@@ -52,7 +52,10 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .xadd(
             &producer.queue_key,
             GENERATE_STREAM_ID,
-            internal_to_stream_payload!(InternalPayload(payload, 0), producer.payload_key.as_str()),
+            internal_to_stream_payload!(
+                InternalPayload::new(payload),
+                producer.payload_key.as_str()
+            ),
         )
         .await
         .map_err(QueueError::generic)
@@ -141,11 +144,17 @@ fn internal_from_stream(stream_id: &StreamId, payload_key: &str) -> Result<Inter
         .ok_or(QueueError::NoData)
         .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
 
-    Ok(InternalPayloadOwned(payload, num_receives))
+    Ok(InternalPayloadOwned {
+        payload,
+        num_receives,
+    })
 }
 
 fn internal_to_delivery<R: RedisConnection>(
-    InternalPayloadOwned(payload, num_receives): InternalPayloadOwned,
+    InternalPayloadOwned {
+        payload,
+        num_receives,
+    }: InternalPayloadOwned,
     consumer: &RedisConsumer<R>,
     entry_id: String,
 ) -> Delivery {
@@ -241,11 +250,11 @@ pub(super) async fn add_to_main_queue(
     for key in keys {
         // We don't care about `num_receives` here since we're
         // re-queuing from delayed queue:
-        let InternalPayload(payload, _) = internal_from_list(key)?;
+        let InternalPayload { payload, .. } = internal_from_list(key)?;
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
-            internal_to_stream_payload!(InternalPayload(payload, 0), payload_key),
+            internal_to_stream_payload!(InternalPayload::new(payload), payload_key),
         );
     }
 
@@ -376,8 +385,10 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
         // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
         for stream_id in &ids {
-            let InternalPayloadOwned(payload, num_receives) =
-                internal_from_stream(stream_id, payload_key)?;
+            let InternalPayloadOwned {
+                payload,
+                num_receives,
+            } = internal_from_stream(stream_id, payload_key)?;
 
             if let Some(dlq_config) = &dlq_config {
                 if num_receives >= dlq_config.max_receives {
@@ -400,7 +411,10 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                 main_queue_name,
                 GENERATE_STREAM_ID,
                 internal_to_stream_payload!(
-                    InternalPayload(payload.as_slice(), num_receives),
+                    InternalPayload {
+                        payload: payload.as_slice(),
+                        num_receives
+                    },
                     payload_key
                 ),
             );

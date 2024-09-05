@@ -88,25 +88,38 @@ impl RedisConnection for RedisClusterConnectionManager {
 // First element is the raw payload slice, second
 // is `num_receives`, the number of the times
 // the message has previously been received.
-struct InternalPayload<'a>(&'a [u8], usize);
+struct InternalPayload<'a> {
+    payload: &'a [u8],
+    num_receives: usize,
+}
 
 impl<'a> InternalPayload<'a> {
-    fn payload(&self) -> &[u8] {
-        self.0
-    }
-
-    fn num_receives(&self) -> usize {
-        self.1
+    fn new(payload: &'a [u8]) -> Self {
+        Self {
+            payload,
+            num_receives: 0,
+        }
     }
 }
 
 // The same as `InternalPayload` but with an
 // owned payload.
-struct InternalPayloadOwned(Vec<u8>, usize);
+struct InternalPayloadOwned {
+    payload: Vec<u8>,
+    num_receives: usize,
+}
 
 impl From<InternalPayload<'_>> for InternalPayloadOwned {
-    fn from(InternalPayload(payload, num_receives): InternalPayload) -> Self {
-        Self(payload.to_vec(), num_receives)
+    fn from(
+        InternalPayload {
+            payload,
+            num_receives,
+        }: InternalPayload,
+    ) -> Self {
+        Self {
+            payload: payload.to_vec(),
+            num_receives,
+        }
     }
 }
 
@@ -141,13 +154,18 @@ fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
         1
     };
 
-    Ok(InternalPayload(
-        &payload[payload_sep_pos + 1..],
+    Ok(InternalPayload {
+        payload: &payload[payload_sep_pos + 1..],
         num_receives,
-    ))
+    })
 }
 
-fn internal_to_list_payload(InternalPayload(payload, num_receives): InternalPayload) -> Vec<u8> {
+fn internal_to_list_payload(
+    InternalPayload {
+        payload,
+        num_receives,
+    }: InternalPayload,
+) -> Vec<u8> {
     let id = delayed_key_id();
     let num_receives = num_receives.to_string();
     let mut result =
@@ -654,7 +672,7 @@ impl<R: RedisConnection> RedisProducer<R> {
             .map_err(QueueError::generic)?
             .zadd(
                 &self.delayed_queue_key,
-                internal_to_list_payload(InternalPayload(payload, 0)),
+                internal_to_list_payload(InternalPayload::new(payload)),
                 timestamp,
             )
             .await

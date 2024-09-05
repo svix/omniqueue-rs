@@ -26,7 +26,7 @@ pub(super) async fn send_raw<R: RedisConnection>(
         .map_err(QueueError::generic)?
         .lpush(
             &producer.queue_key,
-            internal_to_list_payload(InternalPayload(payload, 0)),
+            internal_to_list_payload(InternalPayload::new(payload)),
         )
         .await
         .map_err(QueueError::generic)
@@ -79,7 +79,10 @@ async fn receive_with_timeout<R: RedisConnection>(
 }
 
 fn internal_to_delivery<R: RedisConnection>(
-    InternalPayloadOwned(payload, num_receives): InternalPayloadOwned,
+    InternalPayloadOwned {
+        payload,
+        num_receives,
+    }: InternalPayloadOwned,
     consumer: &RedisConsumer<R>,
     old_payload: Vec<u8>,
 ) -> Result<Delivery> {
@@ -139,7 +142,7 @@ impl<R: RedisConnection> Acker for RedisFallbackAcker<R> {
                 // seems possible given that we're already in a failure
                 // scenario), just push the full `InternalPayload` onto the DLQ:
                 let payload = match internal_from_list(&self.old_payload) {
-                    Ok(InternalPayload(payload, _)) => payload,
+                    Ok(InternalPayload { payload, .. }) => payload,
                     Err(e) => {
                         warn!(error = ?e, "Failed to get original payload, sending to DLQ with internal payload");
                         &self.old_payload
@@ -249,7 +252,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         for key in keys {
             if key <= validity_limit {
                 let internal = internal_from_list(&key)?;
-                let num_receives = internal.num_receives();
+                let num_receives = internal.num_receives;
 
                 match &dlq_config {
                     Some(dlq_config) if dlq_config.max_retries_reached(num_receives) => {
@@ -257,7 +260,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                             num_receives = num_receives,
                             "Maximum attempts reached for message, moving item to DLQ",
                         );
-                        send_to_dlq(pool, dlq_config, internal.payload()).await?;
+                        send_to_dlq(pool, dlq_config, internal.payload).await?;
                     }
                     _ => {
                         trace!(
