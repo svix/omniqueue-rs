@@ -1,11 +1,11 @@
-use std::{
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use omniqueue::backends::{
-    redis::{DeadLetterQueueConfig, RedisBackendBuilder},
-    RedisBackend, RedisConfig,
+use omniqueue::{
+    backends::{
+        redis::{DeadLetterQueueConfig, RedisBackendBuilder},
+        RedisBackend, RedisConfig,
+    },
+    Delivery,
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
@@ -343,7 +343,7 @@ async fn test_deadletter_config() {
         async move {
             let client = Client::open(ROOT_URL).unwrap();
             let mut conn = client.get_multiplexed_async_connection().await.unwrap();
-            let mut res: Vec<String> = conn.lpop(&dlq_key, NonZeroUsize::new(100)).await.unwrap();
+            let mut res: Vec<String> = conn.lrange(&dlq_key, 0, 0).await.unwrap();
             assert!(res.len() == asserted_len);
             res.pop()
         }
@@ -386,12 +386,16 @@ async fn test_deadletter_config() {
         .await
         .unwrap();
 
-    for _ in 0..max_receives {
-        let delivery = c.receive().await.unwrap();
+    let assert_delivery = |delivery: &Delivery| {
         assert_eq!(
             Some(&payload),
             delivery.payload_serde_json().unwrap().as_ref()
         );
+    };
+
+    for _ in 0..max_receives {
+        let delivery = c.receive().await.unwrap();
+        assert_delivery(&delivery);
         delivery.nack().await.unwrap();
     }
 
@@ -406,6 +410,15 @@ async fn test_deadletter_config() {
     // Expected message should be on DLQ:
     let res = check_dlq(1).await;
     assert_eq!(payload_str, res.unwrap());
+
+    // Redrive DLQ, receive from main queue, ack:
+    p.redrive_dlq().await.unwrap();
+
+    let delivery = c.receive().await.unwrap();
+    assert_delivery(&delivery);
+    delivery.ack().await.unwrap();
+
+    check_dlq(0).await;
 }
 
 // A message without a `num_receives` field shouldn't
