@@ -13,8 +13,8 @@ use redis::{
 use tracing::{error, trace};
 
 use super::{
-    internal_from_list, DeadLetterQueueConfig, InternalPayload, InternalPayloadOwned,
-    RedisConnection, RedisConsumer, RedisProducer,
+    DeadLetterQueueConfig, InternalPayload, InternalPayloadOwned, RedisConnection, RedisConsumer,
+    RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
@@ -241,20 +241,21 @@ impl<R: RedisConnection> Acker for RedisStreamsAcker<R> {
 }
 
 pub(super) async fn add_to_main_queue(
-    keys: &[Vec<u8>],
+    keys: Vec<InternalPayload<'_>>,
     main_queue_name: &str,
     payload_key: &str,
     conn: &mut impl redis::aio::ConnectionLike,
 ) -> Result<()> {
     let mut pipe = redis::pipe();
-    for key in keys {
-        // We don't care about `num_receives` here since we're
-        // re-queuing from delayed queue:
-        let InternalPayload { payload, .. } = internal_from_list(key)?;
+    // We don't care about existing `num_receives`
+    // since we're pushing onto a different queue.
+    for InternalPayload { payload, .. } in keys {
+        // So reset it to avoid carrying state over:
+        let internal = InternalPayload::new(payload);
         let _ = pipe.xadd(
             main_queue_name,
             GENERATE_STREAM_ID,
-            internal_to_stream_payload!(InternalPayload::new(payload), payload_key),
+            internal_to_stream_payload!(internal, payload_key),
         );
     }
 
