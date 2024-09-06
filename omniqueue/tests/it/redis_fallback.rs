@@ -1,12 +1,12 @@
 use core::str;
-use std::{
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use omniqueue::backends::{
-    redis::{DeadLetterQueueConfig, RedisBackendBuilder},
-    RedisBackend, RedisConfig,
+use omniqueue::{
+    backends::{
+        redis::{DeadLetterQueueConfig, RedisBackendBuilder},
+        RedisBackend, RedisConfig,
+    },
+    Delivery,
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
@@ -335,7 +335,7 @@ async fn test_deadletter_config() {
         async move {
             let client = Client::open(ROOT_URL).unwrap();
             let mut conn = client.get_multiplexed_async_connection().await.unwrap();
-            let mut res: Vec<String> = conn.lpop(&dlq_key, NonZeroUsize::new(100)).await.unwrap();
+            let mut res: Vec<String> = conn.lrange(&dlq_key, 0, 0).await.unwrap();
             assert!(res.len() == asserted_len);
             res.pop()
         }
@@ -351,13 +351,17 @@ async fn test_deadletter_config() {
     // Test send to DLQ via `ack_deadline_ms` expiration:
     p.send_serde_json(&payload).await.unwrap();
 
-    for _ in 0..max_receives {
-        check_dlq(0).await;
-        let delivery = c.receive().await.unwrap();
+    let assert_delivery = |delivery: &Delivery| {
         assert_eq!(
             Some(&payload),
             delivery.payload_serde_json().unwrap().as_ref()
         );
+    };
+
+    for _ in 0..max_receives {
+        check_dlq(0).await;
+        let delivery = c.receive().await.unwrap();
+        assert_delivery(&delivery);
     }
 
     // Give this some time because the reenqueuing can sleep for up to 500ms
@@ -372,6 +376,15 @@ async fn test_deadletter_config() {
     let res = check_dlq(1).await;
     assert_eq!(serde_json::to_string(&payload).unwrap(), res.unwrap());
 
+    // Redrive DLQ, receive from main queue, ack:
+    p.redrive_dlq().await.unwrap();
+
+    let delivery = c.receive().await.unwrap();
+    assert_delivery(&delivery);
+    delivery.ack().await.unwrap();
+
+    check_dlq(0).await;
+
     /* This portion of test is flaky due to https://github.com/svix/omniqueue-rs/issues/102
 
     // Test send to DLQ via explicit `nack`ing:
@@ -380,10 +393,7 @@ async fn test_deadletter_config() {
     for _ in 0..max_receives {
         check_dlq(0).await;
         let delivery = c.receive().await.unwrap();
-        assert_eq!(
-            Some(&payload),
-            delivery.payload_serde_json().unwrap().as_ref()
-        );
+        assert_delivery(&delivery);
         delivery.nack().await.unwrap();
     }
 
