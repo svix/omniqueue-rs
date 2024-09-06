@@ -410,6 +410,10 @@ async fn test_backward_compatible() {
         .take(8)
         .collect();
 
+    let dlq_key: String = std::iter::repeat_with(fastrand::alphanumeric)
+        .take(8)
+        .collect();
+
     let max_receives = 5;
 
     let config = RedisConfig {
@@ -424,7 +428,7 @@ async fn test_backward_compatible() {
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 20,
         dlq_config: Some(DeadLetterQueueConfig {
-            queue_key: "dlq-key".to_owned(),
+            queue_key: dlq_key.to_owned(),
             max_receives,
         }),
     };
