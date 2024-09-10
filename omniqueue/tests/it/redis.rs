@@ -1,16 +1,22 @@
 use std::time::{Duration, Instant};
 
+use bb8_redis::RedisConnectionManager;
+#[cfg(feature = "redis_sentinel")]
+use omniqueue::backends::redis::RedisSentinelConnectionManager;
 use omniqueue::{
     backends::{
-        redis::{DeadLetterQueueConfig, RedisBackendBuilder},
+        redis::{DeadLetterQueueConfig, RedisBackendBuilder, RedisConnection, SentinelConfig},
         RedisBackend, RedisConfig,
     },
     Delivery,
 };
 use redis::{AsyncCommands, Client, Commands};
+use rstest::rstest;
 use serde::{Deserialize, Serialize};
 
 const ROOT_URL: &str = "redis://localhost";
+#[cfg(feature = "redis_sentinel")]
+const SENTINEL_ROOT_URL: &str = "redis://localhost:26379";
 
 pub struct RedisStreamDrop(String);
 impl Drop for RedisStreamDrop {
@@ -30,21 +36,40 @@ impl Drop for RedisStreamDrop {
 ///
 /// This will also return a [`RedisStreamDrop`] to clean up the stream after the
 /// test ends.
-async fn make_test_queue() -> (RedisBackendBuilder, RedisStreamDrop) {
+async fn make_test_queue<R: RedisConnection>(
+    dsn: String,
+) -> (RedisBackendBuilder<R>, RedisStreamDrop) {
     let stream_name: String = std::iter::repeat_with(fastrand::alphanumeric)
         .take(8)
         .collect();
 
-    let client = Client::open(ROOT_URL).unwrap();
-    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+    #[cfg(feature = "redis")]
+    {
+        let client = Client::open(ROOT_URL).unwrap();
+        let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+        let _: () = conn
+            .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
+            .await
+            .unwrap();
+    }
 
-    let _: () = conn
-        .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
-        .await
+    #[cfg(feature = "redis_sentinel")]
+    {
+        let mut client = redis::sentinel::SentinelClient::build(
+            vec![SENTINEL_ROOT_URL],
+            "master0".to_string(),
+            None,
+            redis::sentinel::SentinelServerType::Master,
+        )
         .unwrap();
-
+        let mut conn = client.get_async_connection().await.unwrap();
+        let _: () = conn
+            .xgroup_create_mkstream(&stream_name, "test_cg", 0i8)
+            .await
+            .unwrap();
+    }
     let config = RedisConfig {
-        dsn: ROOT_URL.to_owned(),
+        dsn,
         max_connections: 8,
         reinsert_on_nack: false,
         queue_key: stream_name.clone(),
@@ -55,14 +80,32 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisStreamDrop) {
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 5_000,
         dlq_config: None,
+        sentinel_config: Some(SentinelConfig {
+            service_name: "master0".to_owned(),
+            redis_tls_mode_secure: false,
+            redis_db: None,
+            redis_username: None,
+            redis_password: None,
+            redis_use_resp3: true,
+        }),
     };
 
-    (RedisBackend::builder(config), RedisStreamDrop(stream_name))
+    (
+        RedisBackendBuilder::new(config),
+        RedisStreamDrop(stream_name),
+    )
 }
 
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_raw_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
+async fn test_raw_send_recv<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
+    let (builder, _drop) = get_builder.await;
     let payload = b"{\"test\": \"data\"}";
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -72,11 +115,18 @@ async fn test_raw_send_recv() {
     assert_eq!(d.borrow_payload().unwrap(), payload);
 }
 
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_bytes_send_recv() {
+async fn test_bytes_send_recv<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
     use omniqueue::QueueProducer as _;
 
-    let (builder, _drop) = make_test_queue().await;
+    let (builder, _drop) = get_builder.await;
     let payload = b"hello";
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -91,10 +141,16 @@ async fn test_bytes_send_recv() {
 pub struct ExType {
     a: u8,
 }
-
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_serde_send_recv() {
-    let (builder, _drop) = make_test_queue().await;
+async fn test_serde_send_recv<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
+    let (builder, _drop) = get_builder.await;
     let payload = ExType { a: 2 };
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -107,9 +163,16 @@ async fn test_serde_send_recv() {
 
 /// Consumer will return immediately if there are fewer than max messages to
 /// start with.
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_send_recv_all_partial() {
-    let (builder, _drop) = make_test_queue().await;
+async fn test_send_recv_all_partial<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
+    let (builder, _drop) = get_builder.await;
 
     let payload = ExType { a: 2 };
     let (p, mut c) = builder.build_pair().await.unwrap();
@@ -128,12 +191,19 @@ async fn test_send_recv_all_partial() {
 
 /// Consumer should yield items immediately if there's a full batch ready on the
 /// first poll.
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_send_recv_all_full() {
+async fn test_send_recv_all_full<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
 
-    let (builder, _drop) = make_test_queue().await;
+    let (builder, _drop) = get_builder.await;
 
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -164,13 +234,20 @@ async fn test_send_recv_all_full() {
 
 /// Consumer will return the full batch immediately, but also return immediately
 /// if a partial batch is ready.
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_send_recv_all_full_then_partial() {
+async fn test_send_recv_all_full_then_partial<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
+    let (builder, _drop) = get_builder.await;
+
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
     let payload3 = ExType { a: 3 };
-
-    let (builder, _drop) = make_test_queue().await;
 
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -211,9 +288,16 @@ async fn test_send_recv_all_full_then_partial() {
 }
 
 /// Consumer will NOT wait indefinitely for at least one item.
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_send_recv_all_late_arriving_items() {
-    let (builder, _drop) = make_test_queue().await;
+async fn test_send_recv_all_late_arriving_items<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
+    let (builder, _drop) = get_builder.await;
 
     let (_p, mut c) = builder.build_pair().await.unwrap();
 
@@ -228,10 +312,17 @@ async fn test_send_recv_all_late_arriving_items() {
     assert!(elapsed <= deadline + Duration::from_millis(200));
 }
 
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_scheduled() {
+async fn test_scheduled<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
     let payload1 = ExType { a: 1 };
-    let (builder, _drop) = make_test_queue().await;
+    let (builder, _drop) = get_builder.await;
 
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -250,11 +341,18 @@ async fn test_scheduled() {
     assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
 }
 
+#[rstest]
+#[cfg_attr(feature = "redis", case(async { make_test_queue::<RedisConnectionManager>(ROOT_URL.to_owned()).await }))]
+#[cfg_attr(feature = "redis_sentinel", case(async { make_test_queue::<RedisSentinelConnectionManager>(SENTINEL_ROOT_URL.to_owned()).await }))]
 #[tokio::test]
-async fn test_pending() {
+async fn test_pending<R: RedisConnection>(
+    #[future]
+    #[case]
+    get_builder: (RedisBackendBuilder<R>, RedisStreamDrop),
+) {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
-    let (builder, _drop) = make_test_queue().await;
+    let (builder, _drop) = get_builder.await;
 
     let (p, mut c) = builder.build_pair().await.unwrap();
 
@@ -336,6 +434,7 @@ async fn test_deadletter_config() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -463,6 +562,7 @@ async fn test_deadletter_config_order() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -553,6 +653,7 @@ async fn test_backward_compatible() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let (builder, _drop) = (

@@ -49,6 +49,7 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisKeyDrop) {
         payload_key: "payload".to_owned(),
         ack_deadline_ms: 5_000,
         dlq_config: None,
+        sentinel_config: None,
     };
 
     (
@@ -328,6 +329,7 @@ async fn test_deadletter_config() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -443,6 +445,7 @@ async fn test_deadletter_config_order() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -525,6 +528,7 @@ async fn test_backward_compatible() {
             queue_key: dlq_key.to_owned(),
             max_receives,
         }),
+        sentinel_config: None,
     };
 
     let (builder, _drop) = (
