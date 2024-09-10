@@ -41,6 +41,8 @@ use std::{
 
 use bb8::ManageConnection;
 pub use bb8_redis::RedisConnectionManager;
+#[cfg(feature = "redis_sentinel")]
+use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo, TlsMode};
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use serde::Serialize;
 use svix_ksuid::KsuidLike;
@@ -58,10 +60,14 @@ use crate::{
 #[cfg(feature = "redis_cluster")]
 mod cluster;
 mod fallback;
+#[cfg(feature = "redis_sentinel")]
+mod sentinel;
 mod streams;
 
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
+#[cfg(feature = "redis_sentinel")]
+pub use sentinel::RedisSentinelConnectionManager;
 
 pub trait RedisConnection:
     ManageConnection<
@@ -69,19 +75,50 @@ pub trait RedisConnection:
     Error: std::error::Error + Send + Sync + 'static,
 >
 {
-    fn from_dsn(dsn: &str) -> Result<Self>;
+    fn from_config(config: &RedisConfig) -> Result<Self>;
 }
 
 impl RedisConnection for RedisConnectionManager {
-    fn from_dsn(dsn: &str) -> Result<Self> {
-        Self::new(dsn).map_err(QueueError::generic)
+    fn from_config(config: &RedisConfig) -> Result<Self> {
+        Self::new(config.dsn.as_str()).map_err(QueueError::generic)
     }
 }
 
 #[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
-    fn from_dsn(dsn: &str) -> Result<Self> {
-        Self::new(dsn).map_err(QueueError::generic)
+    fn from_config(config: &RedisConfig) -> Result<Self> {
+        Self::new(config.dsn.as_str()).map_err(QueueError::generic)
+    }
+}
+
+#[cfg(feature = "redis_sentinel")]
+impl RedisConnection for RedisSentinelConnectionManager {
+    fn from_config(config: &RedisConfig) -> Result<Self> {
+        let cfg = config
+            .sentinel_config
+            .clone()
+            .ok_or(QueueError::Unsupported("Missing sentinel configuration"))?;
+
+        let tls_mode = cfg.redis_tls_mode_secure.then_some(TlsMode::Secure);
+        let protocol = if cfg.redis_use_resp3 {
+            ProtocolVersion::RESP3
+        } else {
+            ProtocolVersion::default()
+        };
+        RedisSentinelConnectionManager::new(
+            vec![config.dsn.as_str()],
+            cfg.service_name.clone(),
+            Some(SentinelNodeConnectionInfo {
+                tls_mode,
+                redis_connection_info: Some(RedisConnectionInfo {
+                    db: cfg.redis_db.unwrap_or(0),
+                    username: cfg.redis_username.clone(),
+                    password: cfg.redis_password.clone(),
+                    protocol,
+                }),
+            }),
+        )
+        .map_err(QueueError::generic)
     }
 }
 
@@ -233,6 +270,17 @@ pub struct RedisConfig {
     pub payload_key: String,
     pub ack_deadline_ms: i64,
     pub dlq_config: Option<DeadLetterQueueConfig>,
+    pub sentinel_config: Option<SentinelConfig>,
+}
+
+#[derive(Clone)]
+pub struct SentinelConfig {
+    pub service_name: String,
+    pub redis_tls_mode_secure: bool,
+    pub redis_db: Option<i64>,
+    pub redis_username: Option<String>,
+    pub redis_password: Option<String>,
+    pub redis_use_resp3: bool,
 }
 
 #[derive(Clone)]
@@ -267,6 +315,12 @@ impl RedisBackend {
     #[cfg(feature = "redis_cluster")]
     /// Creates a new redis cluster queue builder with the given configuration.
     pub fn cluster_builder(config: RedisConfig) -> RedisClusterBackendBuilder {
+        RedisBackendBuilder::new(config)
+    }
+
+    #[cfg(feature = "redis_sentinel")]
+    /// Creates a new redis sentinel queue builder with the given configuration.
+    pub fn sentinel_builder(config: RedisConfig) -> RedisSentinelBackendBuilder {
         RedisBackendBuilder::new(config)
     }
 }
@@ -305,8 +359,11 @@ pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
 #[cfg(feature = "redis_cluster")]
 pub type RedisClusterBackendBuilder = RedisBackendBuilder<RedisClusterConnectionManager>;
 
+#[cfg(feature = "redis_sentinel")]
+pub type RedisSentinelBackendBuilder = RedisBackendBuilder<RedisSentinelConnectionManager>;
+
 impl<R: RedisConnection> RedisBackendBuilder<R> {
-    fn new(config: RedisConfig) -> Self {
+    pub fn new(config: RedisConfig) -> Self {
         Self {
             config,
             use_redis_streams: true,
@@ -372,7 +429,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     }
 
     pub async fn build_pair(self) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
-        let redis = R::from_dsn(&self.config.dsn)?;
+        let redis = R::from_config(&self.config)?;
         let redis = bb8::Pool::builder()
             .max_size(self.config.max_connections.into())
             .build(redis)
@@ -407,7 +464,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     }
 
     pub async fn build_producer(self) -> Result<RedisProducer<R>> {
-        let redis = R::from_dsn(&self.config.dsn)?;
+        let redis = R::from_config(&self.config)?;
         let redis = bb8::Pool::builder()
             .max_size(self.config.max_connections.into())
             .build(redis)
@@ -427,7 +484,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     }
 
     pub async fn build_consumer(self) -> Result<RedisConsumer<R>> {
-        let redis = R::from_dsn(&self.config.dsn)?;
+        let redis = R::from_config(&self.config)?;
         let redis = bb8::Pool::builder()
             .max_size(self.config.max_connections.into())
             .build(redis)
