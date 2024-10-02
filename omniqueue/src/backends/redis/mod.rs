@@ -324,7 +324,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         }
     }
 
-    /// Set a custom [`RedisConnection`] mananager to use.
+    /// Set a custom [`RedisConnection`] manager to use.
     ///
     /// This method only makes sense to call if you have a custom connection
     /// manager implementation. For clustered redis, use
