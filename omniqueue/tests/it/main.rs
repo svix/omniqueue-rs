@@ -4,7 +4,7 @@ mod azure_queue_storage;
 mod gcp_pubsub;
 #[cfg(feature = "rabbitmq")]
 mod rabbitmq;
-#[cfg(any(feature = "redis", feature = "redis_sentinel"))]
+#[cfg(feature = "redis")]
 mod redis;
 #[cfg(feature = "redis_cluster")]
 mod redis_cluster;
