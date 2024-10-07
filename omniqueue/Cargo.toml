@@ -35,11 +35,11 @@ tracing = "0.1"
 [dev-dependencies]
 anyhow = "1.0.79"
 fastrand = "2.0.1"
+rstest = "0.23.0"
 serde = { version = "1.0.196", features = ["derive"] }
 tokio = { version = "1", features = ["macros"] }
 tokio-executor-trait = "2.1"
 tokio-reactor-trait = "1.1"
-rstest = "0.23.0"
 
 [features]
 default = ["in_memory", "gcp_pubsub", "rabbitmq", "redis", "redis_cluster", "sqs"]
