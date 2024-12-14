@@ -205,8 +205,7 @@ fn internal_to_list_payload(
 ) -> Vec<u8> {
     let id = delayed_key_id();
     let num_receives = num_receives.to_string();
-    let mut result =
-        Vec::with_capacity(id.len() + num_receives.as_bytes().len() + payload.len() + 3);
+    let mut result = Vec::with_capacity(id.len() + num_receives.len() + payload.len() + 3);
     result.extend(id.as_bytes());
     result.push(b'#');
     result.extend(num_receives.as_bytes());
