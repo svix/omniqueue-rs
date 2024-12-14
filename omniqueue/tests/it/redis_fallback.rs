@@ -543,7 +543,7 @@ async fn test_backward_compatible() {
     // Old payload format:
     let id = svix_ksuid::Ksuid::new(None, None).to_base62();
     let org_payload_str = serde_json::to_string(&org_payload).unwrap();
-    let mut payload = Vec::with_capacity(id.len() + org_payload_str.as_bytes().len() + 1);
+    let mut payload = Vec::with_capacity(id.len() + org_payload_str.len() + 1);
     payload.extend(id.as_bytes());
     payload.push(b'|');
     payload.extend(org_payload_str.as_bytes());
