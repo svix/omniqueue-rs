@@ -336,7 +336,7 @@ async fn send_to_dlq<R: RedisConnection>(
         .await
         .map_err(QueueError::generic)?;
 
-    let payload = ids.first().take().ok_or_else(|| QueueError::NoData)?;
+    let payload = ids.first().ok_or_else(|| QueueError::NoData)?;
     let payload: Vec<u8> = payload
         .map
         .get(payload_key)
