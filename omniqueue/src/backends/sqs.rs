@@ -10,6 +10,7 @@ use aws_sdk_sqs::{
     types::{error::ReceiptHandleIsInvalid, Message, SendMessageBatchRequestEntry},
     Client,
 };
+use futures_util::FutureExt as _;
 use serde::Serialize;
 
 #[allow(deprecated)]
@@ -49,10 +50,17 @@ impl SqsConfigFull {
                 &aws_config::from_env()
                     .endpoint_url(&self.queue_dsn)
                     .load()
+                    // Segment the async state machine. load future is >7kb at the time of writing.
+                    .boxed()
                     .await,
             )
         } else {
-            aws_sdk_sqs::Config::from(&aws_config::load_from_env().await)
+            aws_sdk_sqs::Config::from(
+                &aws_config::load_from_env()
+                    // Same as above
+                    .boxed()
+                    .await,
+            )
         }
     }
 }
@@ -205,6 +213,8 @@ impl Acker for SqsAcker {
                 .queue_url(&self.queue_dsn)
                 .receipt_handle(receipt_handle)
                 .send()
+                // Segment the async state machine. send future is >5kb at the time of writing.
+                .boxed()
                 .await
                 .map_err(aws_to_queue_error)?;
 
@@ -241,6 +251,8 @@ impl Acker for SqsAcker {
                 .queue_url(&self.queue_dsn)
                 .receipt_handle(receipt_handle)
                 .send()
+                // Segment the async state machine. send future is >5kb at the time of writing.
+                .boxed()
                 .await
                 .map_err(aws_to_queue_error)?;
 
@@ -294,6 +306,8 @@ impl SqsProducer {
             .message_body(payload)
             .delay_seconds(delay.as_secs().try_into().map_err(QueueError::generic)?)
             .send()
+            // Segment the async state machine. send future is >5kb at the time of writing.
+            .boxed()
             .await
             .map_err(aws_to_queue_error)?;
 
@@ -349,6 +363,8 @@ impl SqsProducer {
                 .queue_url(&self.queue_dsn)
                 .set_entries(Some(entries))
                 .send()
+                // Segment the async state machine. send future is >5kb at the time of writing.
+                .boxed()
                 .await
                 .map_err(aws_to_queue_error)?;
         }
@@ -414,6 +430,8 @@ impl SqsConsumer {
             .set_max_number_of_messages(Some(1))
             .queue_url(&self.queue_dsn)
             .send()
+            // Segment the async state machine. send future is >5kb at the time of writing.
+            .boxed()
             .await
             .map_err(aws_to_queue_error)?;
 
@@ -438,6 +456,8 @@ impl SqsConsumer {
             .set_max_number_of_messages(Some(max_messages.try_into().map_err(QueueError::generic)?))
             .queue_url(&self.queue_dsn)
             .send()
+            // Segment the async state machine. send future is >5kb at the time of writing.
+            .boxed()
             .await
             .map_err(aws_to_queue_error)?;
 
