@@ -56,8 +56,8 @@
 
 use std::time::{Duration, Instant};
 
-use google_cloud_googleapis::pubsub::v1::DeadLetterPolicy;
-use google_cloud_pubsub::{
+use gcloud_googleapis::pubsub::v1::DeadLetterPolicy;
+use gcloud_pubsub::{
     client::{Client, ClientConfig},
     subscription::SubscriptionConfig,
 };

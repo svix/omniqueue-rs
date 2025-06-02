@@ -5,8 +5,8 @@ use std::{
 };
 
 use futures_util::{future::try_join_all, StreamExt};
-use google_cloud_googleapis::pubsub::v1::PubsubMessage;
-use google_cloud_pubsub::{
+use gcloud_googleapis::pubsub::v1::PubsubMessage;
+use gcloud_pubsub::{
     client::{google_cloud_auth::credentials::CredentialsFile, Client, ClientConfig},
     publisher::Publisher,
     subscriber::ReceivedMessage,
