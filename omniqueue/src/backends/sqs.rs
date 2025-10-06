@@ -456,15 +456,15 @@ impl SqsConsumer {
         )
     }
 
-    /// Receives a message that matches the given filter predicate.
+    /// Receives a single message and checks if it matches the given filter predicate.
     ///
-    /// This will poll SQS repeatedly until a message matching the filter is found,
-    /// or until the timeout is reached. Messages that don't match the filter are
-    /// automatically nacked and returned to the queue.
+    /// This will receive one message from SQS. If the message matches the filter,
+    /// it is returned. If it doesn't match, it is nacked (with DLQ handling if configured)
+    /// and NoData error is returned.
     ///
     /// # Arguments
     /// * `filter` - A predicate function that receives the SQS Message and returns true if it should be consumed
-    /// * `timeout` - Maximum duration to keep polling for a matching message
+    /// * `timeout` - Maximum duration to wait for a message to arrive
     ///
     /// # Example
     /// ```no_run
@@ -487,120 +487,114 @@ impl SqsConsumer {
     where
         F: Fn(&Message) -> bool,
     {
-        let deadline = std::time::Instant::now() + timeout;
+        let wait_time = timeout.min(Duration::from_secs(20)); // SQS max wait time
 
-        loop {
-            if std::time::Instant::now() >= deadline {
-                return Err(QueueError::NoData);
-            }
+        let mut req = self
+            .client
+            .receive_message()
+            .set_max_number_of_messages(Some(1))
+            .set_wait_time_seconds(Some(
+                wait_time
+                    .as_secs()
+                    .try_into()
+                    .map_err(|_| QueueError::NoData)?,
+            ))
+            .queue_url(&self.queue_dsn);
 
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            let wait_time = remaining.min(Duration::from_secs(20)); // SQS max wait time
+        for attr in &self.message_attribute_names {
+            req = req.message_system_attribute_names(attr.clone());
+        }
 
-            let mut req = self
-                .client
-                .receive_message()
-                .set_max_number_of_messages(Some(1))
-                .set_wait_time_seconds(Some(
-                    wait_time
-                        .as_secs()
-                        .try_into()
-                        .map_err(|_| QueueError::NoData)?,
-                ))
-                .queue_url(&self.queue_dsn);
+        req = req.message_attribute_names("All".to_string());
 
-            for attr in &self.message_attribute_names {
-                req = req.message_system_attribute_names(attr.clone());
-            }
+        let out = req.send().boxed().await.map_err(aws_to_queue_error)?;
 
-            req = req.message_attribute_names("All".to_string());
+        if let Some(message) = out.messages().first() {
+            if filter(message) {
+                return Ok(self.wrap_message(message));
+            } else {
+                // Message doesn't match filter - track filter failures
+                if let (Some(dlq_config), Some(receipt_handle), Some(body)) =
+                    (&self.dlq_config, message.receipt_handle(), message.body())
+                {
+                    // Get current filter failure count from message attributes
+                    let filter_fail_count = message
+                        .message_attributes()
+                        .and_then(|attrs| attrs.get("FilterFailCount"))
+                        .and_then(|attr| attr.string_value())
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
 
-            let out = req.send().boxed().await.map_err(aws_to_queue_error)?;
+                    let new_count = filter_fail_count + 1;
 
-            if let Some(message) = out.messages().first() {
-                if filter(message) {
-                    return Ok(self.wrap_message(message));
-                } else {
-                    // Message doesn't match filter - track filter failures
-                    if let (Some(dlq_config), Some(receipt_handle), Some(body)) =
-                        (&self.dlq_config, message.receipt_handle(), message.body())
-                    {
-                        // Get current filter failure count from message attributes
-                        let filter_fail_count = message
-                            .message_attributes()
-                            .and_then(|attrs| attrs.get("FilterFailCount"))
-                            .and_then(|attr| attr.string_value())
-                            .and_then(|v| v.parse::<usize>().ok())
-                            .unwrap_or(0);
+                    if new_count >= dlq_config.max_filter_failures {
+                        // Send to DLQ (without FilterFailCount attribute)
+                        let _ = self
+                            .client
+                            .send_message()
+                            .queue_url(&dlq_config.queue_url)
+                            .message_body(body)
+                            .send()
+                            .boxed()
+                            .await;
 
-                        let new_count = filter_fail_count + 1;
-
-                        if new_count >= dlq_config.max_filter_failures {
-                            // Send to DLQ (without FilterFailCount attribute)
-                            let _ = self
-                                .client
-                                .send_message()
-                                .queue_url(&dlq_config.queue_url)
-                                .message_body(body)
-                                .send()
-                                .boxed()
-                                .await;
-
-                            // Delete from main queue
-                            let _ = self
-                                .client
-                                .delete_message()
-                                .queue_url(&self.queue_dsn)
-                                .receipt_handle(receipt_handle)
-                                .send()
-                                .boxed()
-                                .await;
-                        } else {
-                            // Delete old message
-                            let _ = self
-                                .client
-                                .delete_message()
-                                .queue_url(&self.queue_dsn)
-                                .receipt_handle(receipt_handle)
-                                .send()
-                                .boxed()
-                                .await;
-
-                            // Re-send with incremented filter fail count
-                            let _ = self
-                                .client
-                                .send_message()
-                                .queue_url(&self.queue_dsn)
-                                .message_body(body)
-                                .message_attributes(
-                                    "FilterFailCount",
-                                    aws_sdk_sqs::types::MessageAttributeValue::builder()
-                                        .data_type("Number")
-                                        .string_value(new_count.to_string())
-                                        .build()
-                                        .unwrap(),
-                                )
-                                .send()
-                                .boxed()
-                                .await;
-                        }
+                        // Delete from main queue
+                        let _ = self
+                            .client
+                            .delete_message()
+                            .queue_url(&self.queue_dsn)
+                            .receipt_handle(receipt_handle)
+                            .send()
+                            .boxed()
+                            .await;
                     } else {
-                        // No DLQ config - just return to queue
-                        if let Some(receipt_handle) = message.receipt_handle() {
-                            let _ = self
-                                .client
-                                .change_message_visibility()
-                                .queue_url(&self.queue_dsn)
-                                .receipt_handle(receipt_handle)
-                                .visibility_timeout(0)
-                                .send()
-                                .boxed()
-                                .await;
-                        }
+                        // Delete old message
+                        let _ = self
+                            .client
+                            .delete_message()
+                            .queue_url(&self.queue_dsn)
+                            .receipt_handle(receipt_handle)
+                            .send()
+                            .boxed()
+                            .await;
+
+                        // Re-send with incremented filter fail count
+                        let _ = self
+                            .client
+                            .send_message()
+                            .queue_url(&self.queue_dsn)
+                            .message_body(body)
+                            .message_attributes(
+                                "FilterFailCount",
+                                aws_sdk_sqs::types::MessageAttributeValue::builder()
+                                    .data_type("Number")
+                                    .string_value(new_count.to_string())
+                                    .build()
+                                    .unwrap(),
+                            )
+                            .send()
+                            .boxed()
+                            .await;
+                    }
+                } else {
+                    // No DLQ config - just return to queue
+                    if let Some(receipt_handle) = message.receipt_handle() {
+                        let _ = self
+                            .client
+                            .change_message_visibility()
+                            .queue_url(&self.queue_dsn)
+                            .receipt_handle(receipt_handle)
+                            .visibility_timeout(0)
+                            .send()
+                            .boxed()
+                            .await;
                     }
                 }
+                return Err(QueueError::NoData);
             }
         }
+
+        Err(QueueError::NoData)
     }
 
     pub async fn receive(&self) -> Result<Delivery> {
