@@ -444,7 +444,7 @@ pub struct SqsConsumer {
 }
 
 impl SqsConsumer {
-    fn wrap_message(&self, message: &Message) -> Delivery {
+    pub fn wrap_message(&self, message: &Message) -> Delivery {
         Delivery::new(
             message.body().unwrap_or_default().as_bytes().to_owned(),
             SqsAcker {
