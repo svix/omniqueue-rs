@@ -98,6 +98,8 @@ pub mod builder;
 mod queue;
 mod scheduled;
 
+pub use queue::Acker;
+
 #[allow(deprecated)]
 pub use self::{
     builder::QueueBuilder,
