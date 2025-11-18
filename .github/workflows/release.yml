@@ -16,12 +16,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ matrix.rust }}
-
-      - uses: Swatinem/rust-cache@v2
-        # only restore cache for faster publishing, don't save back results
-        save-if: false
 
       - name: Publish
         env:
