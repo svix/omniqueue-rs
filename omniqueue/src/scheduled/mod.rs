@@ -41,6 +41,35 @@ pub trait ScheduledQueueProducer: QueueProducer {
     }
 }
 
+impl<T> ScheduledQueueProducer for &T
+where
+    T: ScheduledQueueProducer,
+{
+    fn send_raw_scheduled(
+        &self,
+        payload: &Self::Payload,
+        delay: Duration,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_raw_scheduled(payload, delay)
+    }
+
+    fn send_bytes_scheduled(
+        &self,
+        payload: &[u8],
+        delay: Duration,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_bytes_scheduled(payload, delay)
+    }
+
+    fn send_serde_json_scheduled<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+        delay: Duration,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_serde_json_scheduled(payload, delay)
+    }
+}
+
 pub struct DynScheduledProducer(Box<dyn ErasedScheduledQueueProducer>);
 
 impl DynScheduledProducer {
