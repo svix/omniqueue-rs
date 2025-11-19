@@ -85,6 +85,53 @@ pub trait QueueProducer: Send + Sync + Sized {
     }
 }
 
+impl<T> QueueProducer for &T
+where
+    T: QueueProducer,
+{
+    type Payload = T::Payload;
+
+    fn send_raw(&self, payload: &Self::Payload) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_raw(payload)
+    }
+
+    fn send_raw_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_raw_batch(payloads)
+    }
+
+    fn send_bytes(&self, payload: &[u8]) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_bytes(payload)
+    }
+
+    fn send_bytes_batch(
+        &self,
+        payloads: impl IntoIterator<Item: AsRef<[u8]> + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_bytes_batch(payloads)
+    }
+
+    fn send_serde_json<P: Serialize + Sync>(
+        &self,
+        payload: &P,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_serde_json(payload)
+    }
+
+    fn send_serde_json_batch(
+        &self,
+        payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
+    ) -> impl Future<Output = Result<()>> + Send {
+        (**self).send_serde_json_batch(payloads)
+    }
+
+    fn redrive_dlq(&self) -> impl Future<Output = Result<()>> + Send {
+        (**self).redrive_dlq()
+    }
+}
+
 pub struct DynProducer(Box<dyn ErasedQueueProducer>);
 
 impl DynProducer {
