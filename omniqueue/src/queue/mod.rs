@@ -10,8 +10,9 @@ mod consumer;
 mod producer;
 
 use self::acker::DynAcker;
-pub(crate) use self::{acker::Acker, producer::ErasedQueueProducer};
+pub(crate) use self::producer::ErasedQueueProducer;
 pub use self::{
+    acker::Acker,
     consumer::{DynConsumer, QueueConsumer},
     producer::{DynProducer, QueueProducer},
 };
@@ -62,7 +63,7 @@ impl Delivery {
         )),
         allow(dead_code)
     )]
-    pub(crate) fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
+    pub fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
         Self {
             payload: Some(payload),
             acker: DynAcker::new(acker),

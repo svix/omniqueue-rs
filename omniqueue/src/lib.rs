@@ -98,6 +98,8 @@ pub mod builder;
 mod queue;
 mod scheduled;
 
+pub use queue::Acker;
+
 #[allow(deprecated)]
 pub use self::{
     builder::QueueBuilder,
@@ -148,6 +150,12 @@ impl QueueError {
 pub trait QueuePayload: Send + Sync + 'static {
     fn to_bytes_naive(&self) -> Result<Vec<u8>>;
     fn from_bytes_naive(bytes: &[u8]) -> Result<Box<Self>>;
+
+    #[doc(hidden)]
+    /// An optional partition id, used in the redis fair queue implementation
+    fn partition_id(&self) -> Option<&str> {
+        None
+    }
 }
 
 impl QueuePayload for Vec<u8> {
