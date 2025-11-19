@@ -143,13 +143,6 @@ ref_delegate!(T, Arc<T>);
 
 pub struct DynProducer(Box<dyn ErasedQueueProducer>);
 
-impl DynProducer {
-    fn new(inner: impl QueueProducer + 'static) -> Self {
-        let dyn_inner = DynProducerInner { inner };
-        Self(Box::new(dyn_inner))
-    }
-}
-
 pub(crate) trait ErasedQueueProducer: Send + Sync {
     fn send_raw<'a>(
         &'a self,
@@ -177,6 +170,11 @@ impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
 }
 
 impl DynProducer {
+    fn new(inner: impl QueueProducer + 'static) -> Self {
+        let dyn_inner = DynProducerInner { inner };
+        Self(Box::new(dyn_inner))
+    }
+
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.0.send_raw(payload).await
     }

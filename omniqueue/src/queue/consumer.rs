@@ -60,13 +60,6 @@ ref_delegate!(T, Box<T>);
 
 pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
 
-impl DynConsumer {
-    fn new(inner: impl QueueConsumer + 'static) -> Self {
-        let c = DynConsumerInner { inner };
-        Self(Box::new(c))
-    }
-}
-
 trait ErasedQueueConsumer: Send {
     fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>>;
     fn receive_all(
@@ -116,6 +109,11 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
 }
 
 impl DynConsumer {
+    fn new(inner: impl QueueConsumer + 'static) -> Self {
+        let c = DynConsumerInner { inner };
+        Self(Box::new(c))
+    }
+
     pub async fn receive(&mut self) -> Result<Delivery> {
         self.0.receive().await
     }
