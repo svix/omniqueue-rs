@@ -31,6 +31,25 @@ pub trait QueueConsumer: Send + Sized {
     }
 }
 
+impl<T> QueueConsumer for &mut T
+where
+    T: QueueConsumer,
+{
+    type Payload = T::Payload;
+
+    fn receive(&mut self) -> impl Future<Output = Result<Delivery>> + Send {
+        (**self).receive()
+    }
+
+    fn receive_all(
+        &mut self,
+        max_messages: usize,
+        deadline: Duration,
+    ) -> impl Future<Output = Result<Vec<Delivery>>> + Send {
+        (**self).receive_all(max_messages, deadline)
+    }
+}
+
 pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
 
 impl DynConsumer {
