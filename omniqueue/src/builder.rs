@@ -58,19 +58,19 @@ impl<Q: QueueBackend> QueueBuilder<Q> {
     }
 }
 
-impl<Q: QueueBackend + 'static> QueueBuilder<Q, Dynamic> {
-    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
+impl<'a, Q: QueueBackend + 'a> QueueBuilder<Q, Dynamic> {
+    pub async fn build_pair(self) -> Result<(DynProducer<'a>, DynConsumer<'a>)> {
         let (p, c) = Q::new_pair(self.config).await?;
         Ok((p.into_dyn(), c.into_dyn()))
     }
 
-    pub async fn build_producer(self) -> Result<DynProducer> {
+    pub async fn build_producer(self) -> Result<DynProducer<'a>> {
         let p = Q::producing_half(self.config).await?;
 
         Ok(p.into_dyn())
     }
 
-    pub async fn build_consumer(self) -> Result<DynConsumer> {
+    pub async fn build_consumer(self) -> Result<DynConsumer<'a>> {
         let c = Q::consuming_half(self.config).await?;
 
         Ok(c.into_dyn())

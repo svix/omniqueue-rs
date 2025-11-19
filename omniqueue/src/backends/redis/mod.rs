@@ -592,19 +592,19 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
 }
 
 impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
-    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
+    pub async fn build_pair(self) -> Result<(DynProducer<'static>, DynConsumer<'static>)> {
         #[allow(deprecated)]
         let (p, c) = RedisBackend::<R>::new_pair(self.config).await?;
         Ok((p.into_dyn(), c.into_dyn()))
     }
 
-    pub async fn build_producer(self) -> Result<DynProducer> {
+    pub async fn build_producer(self) -> Result<DynProducer<'static>> {
         #[allow(deprecated)]
         let p = RedisBackend::<R>::producing_half(self.config).await?;
         Ok(p.into_dyn())
     }
 
-    pub async fn build_consumer(self) -> Result<DynConsumer> {
+    pub async fn build_consumer(self) -> Result<DynConsumer<'static>> {
         #[allow(deprecated)]
         let c = RedisBackend::<R>::consuming_half(self.config).await?;
         Ok(c.into_dyn())

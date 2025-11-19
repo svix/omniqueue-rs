@@ -14,9 +14,9 @@ pub trait QueueConsumer: Send + Sized {
         deadline: Duration,
     ) -> impl Future<Output = Result<Vec<Delivery>>> + Send;
 
-    fn into_dyn(self) -> DynConsumer
+    fn into_dyn<'a>(self) -> DynConsumer<'a>
     where
-        Self: 'static,
+        Self: 'a,
     {
         DynConsumer::new(self)
     }
@@ -58,7 +58,7 @@ macro_rules! ref_delegate {
 ref_delegate!(T, &mut T);
 ref_delegate!(T, Box<T>);
 
-pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
+pub struct DynConsumer<'a>(Box<dyn ErasedQueueConsumer + 'a>);
 
 trait ErasedQueueConsumer: Send {
     fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>>;
@@ -108,8 +108,8 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
     }
 }
 
-impl DynConsumer {
-    fn new(inner: impl QueueConsumer + 'static) -> Self {
+impl<'a> DynConsumer<'a> {
+    fn new(inner: impl QueueConsumer + 'a) -> Self {
         let c = DynConsumerInner { inner };
         Self(Box::new(c))
     }
@@ -137,11 +137,14 @@ impl DynConsumer {
     }
 }
 
-impl crate::QueueConsumer for DynConsumer {
+impl<'a> crate::QueueConsumer for DynConsumer<'a> {
     type Payload = Vec<u8>;
     omni_delegate!(receive, receive_all);
 
-    fn into_dyn(self) -> DynConsumer {
+    fn into_dyn<'b>(self) -> DynConsumer<'b>
+    where
+        'a: 'b,
+    {
         self
     }
 

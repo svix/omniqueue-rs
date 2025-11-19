@@ -33,9 +33,9 @@ pub trait ScheduledQueueProducer: QueueProducer {
         }
     }
 
-    fn into_dyn_scheduled(self) -> DynScheduledProducer
+    fn into_dyn_scheduled<'a>(self) -> DynScheduledProducer<'a>
     where
-        Self: 'static,
+        Self: 'a,
     {
         DynScheduledProducer::new(self)
     }
@@ -79,7 +79,7 @@ ref_delegate!(T, &T);
 ref_delegate!(T, Box<T>);
 ref_delegate!(T, Arc<T>);
 
-pub struct DynScheduledProducer(Box<dyn ErasedScheduledQueueProducer>);
+pub struct DynScheduledProducer<'a>(Box<dyn ErasedScheduledQueueProducer + 'a>);
 
 trait ErasedScheduledQueueProducer: ErasedQueueProducer {
     fn send_raw_scheduled<'a>(
@@ -115,8 +115,8 @@ impl<P: ScheduledQueueProducer> ErasedScheduledQueueProducer for DynScheduledPro
     }
 }
 
-impl DynScheduledProducer {
-    fn new(inner: impl ScheduledQueueProducer + 'static) -> Self {
+impl<'a> DynScheduledProducer<'a> {
+    fn new(inner: impl ScheduledQueueProducer + 'a) -> Self {
         let dyn_inner = DynScheduledProducerInner { inner };
         Self(Box::new(dyn_inner))
     }
@@ -148,10 +148,10 @@ impl DynScheduledProducer {
     }
 }
 
-impl crate::QueueProducer for DynScheduledProducer {
+impl<'a> crate::QueueProducer for DynScheduledProducer<'a> {
     type Payload = Vec<u8>;
     omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
-impl crate::ScheduledQueueProducer for DynScheduledProducer {
+impl<'a> crate::ScheduledQueueProducer for DynScheduledProducer<'a> {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
 }
