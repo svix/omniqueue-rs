@@ -31,24 +31,32 @@ pub trait QueueConsumer: Send + Sized {
     }
 }
 
-impl<T> QueueConsumer for &mut T
-where
-    T: QueueConsumer,
-{
-    type Payload = T::Payload;
+macro_rules! ref_delegate {
+    ($ty_param:ident, $ty:ty) => {
+        #[deny(unconditional_recursion)]
+        impl<$ty_param> QueueConsumer for $ty
+        where
+            $ty_param: QueueConsumer,
+        {
+            type Payload = $ty_param::Payload;
 
-    fn receive(&mut self) -> impl Future<Output = Result<Delivery>> + Send {
-        (**self).receive()
-    }
+            fn receive(&mut self) -> impl Future<Output = Result<Delivery>> + Send {
+                (**self).receive()
+            }
 
-    fn receive_all(
-        &mut self,
-        max_messages: usize,
-        deadline: Duration,
-    ) -> impl Future<Output = Result<Vec<Delivery>>> + Send {
-        (**self).receive_all(max_messages, deadline)
-    }
+            fn receive_all(
+                &mut self,
+                max_messages: usize,
+                deadline: Duration,
+            ) -> impl Future<Output = Result<Vec<Delivery>>> + Send {
+                (**self).receive_all(max_messages, deadline)
+            }
+        }
+    };
 }
+
+ref_delegate!(T, &mut T);
+ref_delegate!(T, Box<T>);
 
 pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
 
