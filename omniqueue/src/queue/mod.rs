@@ -10,8 +10,9 @@ mod consumer;
 mod producer;
 
 use self::acker::DynAcker;
-pub(crate) use self::{acker::Acker, producer::ErasedQueueProducer};
+pub(crate) use self::producer::ErasedQueueProducer;
 pub use self::{
+    acker::Acker,
     consumer::{BaseDynConsumer, DynConsumer, QueueConsumer},
     producer::{BaseDynProducer, DynProducer, QueueProducer},
 };
@@ -51,18 +52,8 @@ pub struct Delivery {
 }
 
 impl Delivery {
-    #[cfg_attr(
-        not(any(
-            feature = "in_memory",
-            feature = "gcp_pubsub",
-            feature = "rabbitmq",
-            feature = "redis",
-            feature = "sqs",
-            feature = "azure_queue_storage"
-        )),
-        allow(dead_code)
-    )]
-    pub(crate) fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
+    #[doc(hidden)]
+    pub fn new(payload: Vec<u8>, acker: impl Acker + 'static) -> Self {
         Self {
             payload: Some(payload),
             acker: DynAcker::new(acker),
