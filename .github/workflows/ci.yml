@@ -1,0 +1,92 @@
+name: CI
+
+env:
+  CARGO_TERM_COLOR: always
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  check-fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: rustfmt
+        run: cargo fmt -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: clippy
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # only save the cache on the main branch
+          # cf https://github.com/Swatinem/rust-cache/issues/95
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy
+        run: cargo hack --each-feature clippy --all-targets -- -D warnings
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: [stable, beta]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # only save the cache on the main branch
+          # cf https://github.com/Swatinem/rust-cache/issues/95
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Start test dependencies
+        run: docker compose -f "./testing-docker-compose.yml" up -d
+
+      - name: Run tests
+        env:
+          AWS_DEFAULT_REGION: localhost
+          AWS_ACCESS_KEY_ID: x
+          AWS_SECRET_ACCESS_KEY: x
+        run: cargo test --all-features
+
+      - name: Stop test dependencies
+        if: success() || failure()
+        # use compose kill instead of stop because we don't care about clean
+        # shutdown in the ephemeral CI environment
+        run: docker compose -f "./testing-docker-compose.yml" kill
+
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: crate-ci/typos@v1.39.2
