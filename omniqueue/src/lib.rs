@@ -102,7 +102,7 @@ mod scheduled;
 pub use self::{
     builder::QueueBuilder,
     queue::{
-        BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueBackend,
+        Acker, BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueBackend,
         QueueConsumer, QueueProducer,
     },
     scheduled::{BaseDynScheduledProducer, DynScheduledProducer, ScheduledQueueProducer},

@@ -4,7 +4,8 @@ use sync_wrapper::SyncWrapper;
 
 use crate::Result;
 
-pub(crate) trait Acker: Send {
+#[doc(hidden)]
+pub trait Acker: Send {
     fn ack(&mut self) -> impl Future<Output = Result<()>> + Send;
     fn nack(&mut self) -> impl Future<Output = Result<()>> + Send;
     #[cfg_attr(not(feature = "beta"), allow(dead_code))]
