@@ -51,6 +51,10 @@ macro_rules! ref_delegate {
             ) -> impl Future<Output = Result<Vec<Delivery>>> + Send {
                 (**self).receive_all(max_messages, deadline)
             }
+
+            fn max_messages(&self) -> Option<NonZeroUsize> {
+                (**self).max_messages()
+            }
         }
     };
 }
