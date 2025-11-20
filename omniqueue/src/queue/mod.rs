@@ -12,8 +12,8 @@ mod producer;
 use self::acker::DynAcker;
 pub(crate) use self::{acker::Acker, producer::ErasedQueueProducer};
 pub use self::{
-    consumer::{DynConsumer, QueueConsumer},
-    producer::{DynProducer, QueueProducer},
+    consumer::{BaseDynConsumer, DynConsumer, QueueConsumer},
+    producer::{BaseDynProducer, DynProducer, QueueProducer},
 };
 
 /// A marker trait with utility functions meant for the creation of new

@@ -14,18 +14,18 @@ pub trait QueueConsumer: Send + Sized {
         deadline: Duration,
     ) -> impl Future<Output = Result<Vec<Delivery>>> + Send;
 
-    fn into_dyn(self) -> DynConsumer
+    fn into_dyn<'a>(self) -> BaseDynConsumer<'a>
     where
-        Self: 'static,
+        Self: 'a,
     {
-        DynConsumer::new(self)
+        BaseDynConsumer::new(self)
     }
 
     /// Returns the largest number that may be passed as `max_messages` to
     /// `receive_all`.
     ///
-    /// This is used by [`DynConsumer`] to clamp the `max_messages` to what's
-    /// permissible by the backend that ends up being used.
+    /// This is used by [`BaseDynConsumer`] to clamp the `max_messages` to
+    /// what's permissible by the backend that ends up being used.
     fn max_messages(&self) -> Option<NonZeroUsize> {
         None
     }
@@ -58,7 +58,8 @@ macro_rules! ref_delegate {
 ref_delegate!(T, &mut T);
 ref_delegate!(T, Box<T>);
 
-pub struct DynConsumer(Box<dyn ErasedQueueConsumer>);
+pub struct BaseDynConsumer<'a>(Box<dyn ErasedQueueConsumer + 'a>);
+pub type DynConsumer = BaseDynConsumer<'static>;
 
 trait ErasedQueueConsumer: Send {
     fn receive(&mut self) -> Pin<Box<dyn Future<Output = Result<Delivery>> + Send + '_>>;
@@ -108,8 +109,8 @@ impl<C: QueueConsumer> ErasedQueueConsumer for DynConsumerInner<C> {
     }
 }
 
-impl DynConsumer {
-    fn new(inner: impl QueueConsumer + 'static) -> Self {
+impl<'a> BaseDynConsumer<'a> {
+    fn new(inner: impl QueueConsumer + 'a) -> Self {
         let c = DynConsumerInner { inner };
         Self(Box::new(c))
     }
@@ -137,11 +138,14 @@ impl DynConsumer {
     }
 }
 
-impl crate::QueueConsumer for DynConsumer {
+impl<'a> crate::QueueConsumer for BaseDynConsumer<'a> {
     type Payload = Vec<u8>;
     omni_delegate!(receive, receive_all);
 
-    fn into_dyn(self) -> DynConsumer {
+    fn into_dyn<'b>(self) -> BaseDynConsumer<'b>
+    where
+        'a: 'b,
+    {
         self
     }
 
