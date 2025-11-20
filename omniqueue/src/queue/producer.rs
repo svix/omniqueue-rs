@@ -77,11 +77,11 @@ pub trait QueueProducer: Send + Sync + Sized {
         }
     }
 
-    fn into_dyn(self) -> DynProducer
+    fn into_dyn<'a>(self) -> BaseDynProducer<'a>
     where
-        Self: 'static,
+        Self: 'a,
     {
-        DynProducer::new(self)
+        BaseDynProducer::new(self)
     }
 }
 
@@ -141,14 +141,8 @@ ref_delegate!(T, &T);
 ref_delegate!(T, Box<T>);
 ref_delegate!(T, Arc<T>);
 
-pub struct DynProducer(Box<dyn ErasedQueueProducer>);
-
-impl DynProducer {
-    fn new(inner: impl QueueProducer + 'static) -> Self {
-        let dyn_inner = DynProducerInner { inner };
-        Self(Box::new(dyn_inner))
-    }
-}
+pub struct BaseDynProducer<'a>(Box<dyn ErasedQueueProducer + 'a>);
+pub type DynProducer = BaseDynProducer<'static>;
 
 pub(crate) trait ErasedQueueProducer: Send + Sync {
     fn send_raw<'a>(
@@ -176,7 +170,12 @@ impl<P: QueueProducer> ErasedQueueProducer for DynProducerInner<P> {
     }
 }
 
-impl DynProducer {
+impl<'a> BaseDynProducer<'a> {
+    fn new(inner: impl QueueProducer + 'a) -> Self {
+        let dyn_inner = DynProducerInner { inner };
+        Self(Box::new(dyn_inner))
+    }
+
     pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
         self.0.send_raw(payload).await
     }
@@ -191,7 +190,7 @@ impl DynProducer {
     }
 }
 
-impl crate::QueueProducer for DynProducer {
+impl<'a> crate::QueueProducer for BaseDynProducer<'a> {
     type Payload = Vec<u8>;
     omni_delegate!(send_raw, send_serde_json, redrive_dlq);
 }
