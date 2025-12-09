@@ -1,6 +1,6 @@
 use redis::{
     sentinel::{SentinelClient, SentinelNodeConnectionInfo, SentinelServerType},
-    ErrorKind, IntoConnectionInfo, RedisError,
+    ErrorKind, IntoConnectionInfo, RedisError, ServerErrorKind,
 };
 use tokio::sync::Mutex;
 
@@ -44,7 +44,10 @@ impl bb8::ManageConnection for RedisSentinelConnectionManager {
         let pong: String = redis::cmd("PING").query_async(conn).await?;
         match pong.as_str() {
             "PONG" => Ok(()),
-            _ => Err((ErrorKind::ResponseError, "ping request").into()),
+            _ => {
+                let kind = ErrorKind::Server(ServerErrorKind::ResponseError);
+                Err((kind, "ping request").into())
+            }
         }
     }
 
