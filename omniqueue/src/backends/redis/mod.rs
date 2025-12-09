@@ -99,24 +99,36 @@ impl RedisConnection for RedisSentinelConnectionManager {
             .clone()
             .ok_or(QueueError::Unsupported("Missing sentinel configuration"))?;
 
-        let tls_mode = cfg.redis_tls_mode_secure.then_some(TlsMode::Secure);
+        let tls_mode = if cfg.redis_tls_mode_secure {
+            TlsMode::Secure
+        } else {
+            TlsMode::Insecure
+        };
+
         let protocol = if cfg.redis_use_resp3 {
             ProtocolVersion::RESP3
         } else {
             ProtocolVersion::default()
         };
+
+        let mut conn_info = RedisConnectionInfo::default()
+            .set_db(cfg.redis_db.unwrap_or(0))
+            .set_protocol(protocol);
+        if let Some(username) = &cfg.redis_username {
+            conn_info = conn_info.set_username(username);
+        }
+        if let Some(password) = &cfg.redis_password {
+            conn_info = conn_info.set_password(password);
+        }
+
         RedisSentinelConnectionManager::new(
             vec![config.dsn.as_str()],
             cfg.service_name.clone(),
-            Some(SentinelNodeConnectionInfo {
-                tls_mode,
-                redis_connection_info: Some(RedisConnectionInfo {
-                    db: cfg.redis_db.unwrap_or(0),
-                    username: cfg.redis_username.clone(),
-                    password: cfg.redis_password.clone(),
-                    protocol,
-                }),
-            }),
+            Some(
+                SentinelNodeConnectionInfo::default()
+                    .set_tls_mode(tls_mode)
+                    .set_redis_connection_info(conn_info),
+            ),
         )
         .map_err(QueueError::generic)
     }
