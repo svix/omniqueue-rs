@@ -13,6 +13,8 @@ yanked = "deny"
 ignore = [
     # TODO: Wait for dependencies to upgrade off of paste
     "RUSTSEC-2024-0436",
+    # TODO: Wait for dependencies to upgrade off of rustls-pemfile (unmaintained)
+    "RUSTSEC-2025-0134",
 ]
 
 [licenses]
