@@ -33,7 +33,7 @@ async fn make_test_queue(
                 .into(),
         )
         .with_executor(tokio_executor_trait::Tokio::current())
-        .with_reactor(tokio_reactor_trait::Tokio);
+        .with_reactor(tokio_reactor_trait::Tokio::current());
     let connection = Connection::connect(MQ_URI, options.clone()).await.unwrap();
     let channel = connection.create_channel().await.unwrap();
 
