@@ -5,10 +5,10 @@ use std::time::Duration;
 use bb8::ManageConnection;
 use redis::{
     streams::{
-        StreamAutoClaimOptions, StreamClaimReply, StreamId, StreamRangeReply, StreamReadOptions,
-        StreamReadReply,
+        StreamAutoClaimOptions, StreamAutoClaimReply, StreamId, StreamRangeReply,
+        StreamReadOptions, StreamReadReply,
     },
-    AsyncCommands as _, FromRedisValue, RedisResult,
+    AsyncCommands as _,
 };
 use tracing::{error, trace};
 
@@ -264,27 +264,6 @@ pub(super) async fn add_to_main_queue(
     Ok(())
 }
 
-struct StreamAutoclaimReply {
-    ids: Vec<StreamId>,
-}
-
-impl FromRedisValue for StreamAutoclaimReply {
-    fn from_redis_value(v: &redis::Value) -> RedisResult<Self> {
-        // First try the two member array from before Redis 7.0
-        match <((), StreamClaimReply)>::from_redis_value(v) {
-            Ok(res) => Ok(StreamAutoclaimReply { ids: res.1.ids }),
-
-            // If it's a type error, then try the three member array from Redis 7.0 and after
-            Err(e) if e.kind() == redis::ErrorKind::TypeError => {
-                <((), StreamClaimReply, ())>::from_redis_value(v)
-                    .map(|ok| StreamAutoclaimReply { ids: ok.1.ids })
-            }
-            // Any other error should be returned as is
-            Err(e) => Err(e),
-        }
-    }
-}
-
 /// Scoops up messages that have been claimed but not handled by a deadline,
 /// then re-queues them.
 pub(super) async fn background_task_pending<R: RedisConnection>(
@@ -367,7 +346,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
     // Every iteration checks whether the processing queue has items that should
     // be picked back up, claiming them in the process
-    let StreamAutoclaimReply { ids } = conn
+    let StreamAutoClaimReply { claimed, .. } = conn
         .xautoclaim_options(
             main_queue_name,
             consumer_group,
@@ -379,13 +358,16 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
         .await
         .map_err(QueueError::generic)?;
 
-    if !ids.is_empty() {
-        trace!("Moving {} unhandled messages back to the queue", ids.len());
+    if !claimed.is_empty() {
+        trace!(
+            "Moving {} unhandled messages back to the queue",
+            claimed.len()
+        );
 
         let mut pipe = redis::pipe();
 
         // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
-        for stream_id in &ids {
+        for stream_id in &claimed {
             let InternalPayloadOwned {
                 payload,
                 num_receives,
@@ -427,7 +409,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
             .map_err(QueueError::generic)?;
 
         // Acknowledge all the stale ones so the pending queue is cleared
-        let ids: Vec<_> = ids.iter().map(|wrapped| &wrapped.id).collect();
+        let ids: Vec<_> = claimed.iter().map(|wrapped| &wrapped.id).collect();
 
         let mut pipe = redis::pipe();
         pipe.xack(main_queue_name, consumer_group, &ids);
