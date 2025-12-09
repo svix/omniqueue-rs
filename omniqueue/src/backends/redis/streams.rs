@@ -142,7 +142,7 @@ fn internal_from_stream(stream_id: &StreamId, payload_key: &str) -> Result<Inter
     let payload: Vec<u8> = map
         .get(payload_key)
         .ok_or(QueueError::NoData)
-        .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
+        .and_then(|x| redis::from_redis_value_ref(x).map_err(QueueError::generic))?;
 
     Ok(InternalPayloadOwned {
         payload,
@@ -320,7 +320,7 @@ async fn send_to_dlq<R: RedisConnection>(
         .map
         .get(payload_key)
         .ok_or(QueueError::NoData)
-        .and_then(|x| redis::from_redis_value(x).map_err(QueueError::generic))?;
+        .and_then(|x| redis::from_redis_value_ref(x).map_err(QueueError::generic))?;
 
     let _: () = redis
         .get()
