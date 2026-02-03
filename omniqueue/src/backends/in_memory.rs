@@ -151,6 +151,16 @@ impl InMemoryConsumer {
         }
         Ok(out)
     }
+
+    /// Return the number of messages buffered in the channel
+    pub fn len(&self) -> usize {
+        self.rx.len()
+    }
+
+    /// Returns true if and only if the underlying queue's buffer is empty
+    pub fn is_empty(&self) -> bool {
+        self.rx.is_empty()
+    }
 }
 
 impl crate::QueueConsumer for InMemoryConsumer {
@@ -375,5 +385,29 @@ mod tests {
         assert!(now.elapsed() >= delay);
         assert!(now.elapsed() < delay * 2);
         assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_len() {
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+
+        assert!(c.is_empty());
+
+        p.send_serde_json(&1).await.unwrap();
+        assert_eq!(c.len(), 1);
+        assert!(!c.is_empty());
+        p.send_serde_json(&2).await.unwrap();
+        assert_eq!(c.len(), 2);
+        assert_eq!(
+            c.receive().await.unwrap().payload_serde_json().unwrap(),
+            Some(1)
+        );
+        assert_eq!(c.len(), 1);
+        assert_eq!(
+            c.receive().await.unwrap().payload_serde_json().unwrap(),
+            Some(2)
+        );
+        assert_eq!(c.len(), 0);
+        assert!(c.is_empty());
     }
 }
