@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
-const MAX_PAYLOAD_SIZE: usize = 262_144;
+const MAX_PAYLOAD_SIZE: usize = 1_048_576;
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html
 const MAX_BATCH_SIZE: usize = 10;
 
