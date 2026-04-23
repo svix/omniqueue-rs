@@ -39,6 +39,7 @@ pub struct SqsConfigFull {
     queue_dsn: String,
     override_endpoint: bool,
     sqs_config: Option<aws_sdk_sqs::Config>,
+    max_payload_size: usize,
 }
 
 impl SqsConfigFull {
@@ -76,6 +77,7 @@ impl From<SqsConfig> for SqsConfigFull {
             queue_dsn,
             override_endpoint,
             sqs_config: None,
+            max_payload_size: MAX_PAYLOAD_SIZE,
         }
     }
 }
@@ -92,6 +94,7 @@ impl From<String> for SqsConfigFull {
             queue_dsn: dsn,
             override_endpoint: false,
             sqs_config: None,
+            max_payload_size: MAX_PAYLOAD_SIZE,
         }
     }
 }
@@ -188,6 +191,18 @@ impl QueueBuilder<SqsBackend> {
     /// Configure whether to override the AWS endpoint URL with the queue DSN.
     pub fn override_endpoint(mut self, value: bool) -> Self {
         self.config.override_endpoint = value;
+        self
+    }
+
+    /// Configure the maximum message size.
+    ///
+    /// Any send attempts over this size will return
+    /// `QueueError::PayloadTooLarge` without ever going to SQS.
+    ///
+    /// By default, this is the maximum configurable payload size as per SQS
+    /// documentation.
+    pub fn max_payload_size(mut self, value: usize) -> Self {
+        self.config.max_payload_size = value;
         self
     }
 }
