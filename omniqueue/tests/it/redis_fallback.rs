@@ -10,7 +10,7 @@ use omniqueue::{
 };
 use redis::{AsyncCommands, Client, Commands};
 use serde::{Deserialize, Serialize};
-use svix_ksuid::KsuidLike;
+use svix_ksuid::KsuidLike as _;
 
 const ROOT_URL: &str = "redis://localhost";
 
@@ -567,4 +567,85 @@ async fn test_backward_compatible() {
         .await
         .unwrap();
     assert!(delivery.is_empty());
+}
+
+async fn make_test_queue_with_deadline(
+    ack_deadline_ms: i64,
+    dlq_config: Option<DeadLetterQueueConfig>,
+) -> (RedisBackendBuilder, String, RedisKeyDrop) {
+    let queue_key: String = std::iter::repeat_with(fastrand::alphanumeric)
+        .take(8)
+        .collect();
+    let config = RedisConfig {
+        dsn: ROOT_URL.to_owned(),
+        max_connections: 8,
+        reinsert_on_nack: false,
+        queue_key: queue_key.clone(),
+        delayed_queue_key: format!("{queue_key}::delayed"),
+        delayed_lock_key: format!("{queue_key}::delayed_lock"),
+        consumer_group: "test_cg".to_owned(),
+        consumer_name: "test_cn".to_owned(),
+        payload_key: "payload".to_owned(),
+        ack_deadline_ms,
+        dlq_config,
+        sentinel_config: None,
+    };
+    let processing_queue_key = format!("{queue_key}_processing");
+    (
+        RedisBackend::builder(config)
+            .use_redis_streams(false)
+            .background_task_poll_interval(Duration::from_millis(10)),
+        processing_queue_key,
+        RedisKeyDrop(queue_key),
+    )
+}
+
+#[tokio::test]
+async fn test_ack_deadline_processing() {
+    let ack_deadline_ms: i64 = 500;
+    let payload = ExType { a: 42 };
+
+    let (builder, _processing_queue_key, _drop) =
+        make_test_queue_with_deadline(ack_deadline_ms, None).await;
+
+    let (p, mut c) = builder.build_pair().await.unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    // Let the message age past the refresh threshold before receiving
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Dequeue -- message should get new timestamp in processing queue
+    let delivery = c.receive().await.unwrap();
+    assert_eq!(
+        Some(&payload),
+        delivery.payload_serde_json().unwrap().as_ref()
+    );
+    drop(delivery);
+
+    // Still in processing after 250 ms
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(c
+        .receive_all(1, Duration::from_millis(10))
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Past the deadline — should be requeued
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let delivery = c.receive_all(1, Duration::from_millis(50)).await.unwrap();
+    assert_eq!(1, delivery.len());
+    assert_eq!(
+        Some(&payload),
+        delivery[0].payload_serde_json().unwrap().as_ref()
+    );
+    delivery.into_iter().next().unwrap().ack().await.unwrap();
+
+    // Should still be empty
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(c
+        .receive_all(1, Duration::from_millis(10))
+        .await
+        .unwrap()
+        .is_empty());
 }
