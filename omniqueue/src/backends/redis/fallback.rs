@@ -1,7 +1,7 @@
 //! Implementation of the main queue using two lists instead of redis streams,
 //! for compatibility with redis versions older than 6.2.0.
 
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 use bb8::ManageConnection;
 use redis::AsyncCommands;
@@ -10,10 +10,33 @@ use time::OffsetDateTime;
 use tracing::{error, trace, warn};
 
 use super::{
-    internal_from_list, internal_to_list_payload, DeadLetterQueueConfig, InternalPayload,
-    InternalPayloadOwned, RawPayload, RedisConnection, RedisConsumer, RedisProducer,
+    internal_from_list, internal_to_list_payload, list_entry_id, DeadLetterQueueConfig,
+    InternalPayload, InternalPayloadOwned, RawPayload, RedisConnection, RedisConsumer,
+    RedisProducer,
 };
 use crate::{queue::Acker, Delivery, QueueError, Result};
+
+static REFRESH_TIMESTAMP: OnceLock<redis::Script> = OnceLock::new();
+
+fn refresh_timestamp_script() -> &'static redis::Script {
+    REFRESH_TIMESTAMP.get_or_init(|| {
+        redis::Script::new(
+            r"local processing_queue = KEYS[1]
+              local old_payload      = ARGV[1]
+              local refreshed_payload = ARGV[2]
+              redis.call('LPUSH', processing_queue, refreshed_payload)
+              redis.call('LREM',  processing_queue, 1, old_payload)",
+        )
+    })
+}
+
+fn payload_is_older_than(raw_payload: &[u8], threshold: Duration) -> bool {
+    let id = list_entry_id(raw_payload);
+    let threshold_ksuid = KsuidMs::new(Some(OffsetDateTime::now_utc() - threshold), None)
+        .to_string()
+        .into_bytes();
+    id <= threshold_ksuid.as_slice()
+}
 
 pub(super) async fn send_raw<R: RedisConnection>(
     producer: &RedisProducer<R>,
@@ -51,11 +74,9 @@ async fn receive_with_timeout<R: RedisConnection>(
     consumer: &RedisConsumer<R>,
     timeout: Duration,
 ) -> Result<Option<Delivery>> {
-    let payload: Option<Vec<u8>> = consumer
-        .redis
-        .get()
-        .await
-        .map_err(QueueError::generic)?
+    let mut conn = consumer.redis.get().await.map_err(QueueError::generic)?;
+
+    let Some(list_entry): Option<Vec<u8>> = conn
         .brpoplpush(
             &consumer.queue_key,
             &consumer.processing_queue_key,
@@ -65,17 +86,44 @@ async fn receive_with_timeout<R: RedisConnection>(
             timeout.as_secs_f64(),
         )
         .await
-        .map_err(QueueError::generic)?;
+        .map_err(QueueError::generic)?
+    else {
+        return Ok(None);
+    };
 
-    match payload {
-        Some(old_payload) => Some(internal_to_delivery(
-            internal_from_list(&old_payload)?.into(),
-            consumer,
-            old_payload,
-        ))
-        .transpose(),
-        None => Ok(None),
-    }
+    let internal = internal_from_list(&list_entry)?;
+    let num_receives = internal.num_receives;
+    let inner_payload = internal.payload.to_vec();
+
+    // Refresh the timestamp of the item (i.e., reenqueue it with a new id)
+    // in the processing queue if the original message is older than `cutoff`:
+    let cutoff = (consumer.ack_deadline / 2).min(Duration::from_secs(5));
+    let ack_key = if payload_is_older_than(&list_entry, cutoff) {
+        let refreshed = internal_to_list_payload(InternalPayload {
+            payload: &inner_payload,
+            num_receives: num_receives - 1,
+        });
+        refresh_timestamp_script()
+            .key(&consumer.processing_queue_key)
+            .arg(&list_entry)
+            .arg(&refreshed)
+            .invoke_async::<()>(&mut *conn)
+            .await
+            .map_err(QueueError::generic)?;
+        refreshed
+    } else {
+        list_entry
+    };
+
+    Some(internal_to_delivery(
+        InternalPayloadOwned {
+            payload: inner_payload,
+            num_receives,
+        },
+        consumer,
+        ack_key,
+    ))
+    .transpose()
 }
 
 fn internal_to_delivery<R: RedisConnection>(
@@ -195,6 +243,7 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
     processing_queue_key: String,
     ack_deadline_ms: i64,
     dlq_config: Option<DeadLetterQueueConfig>,
+    poll_interval: Duration,
 ) -> Result<()> {
     // FIXME: ack_deadline_ms should be unsigned
     let ack_deadline = Duration::from_millis(ack_deadline_ms as _);
@@ -205,11 +254,12 @@ pub(super) async fn background_task_processing<R: RedisConnection>(
             &processing_queue_key,
             ack_deadline,
             &dlq_config,
+            poll_interval,
         )
         .await
         {
             error!("{err}");
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::time::sleep(poll_interval).await;
             continue;
         }
     }
@@ -239,6 +289,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
     processing_queue_key: &str,
     ack_deadline: Duration,
     dlq_config: &Option<DeadLetterQueueConfig>,
+    poll_interval: Duration,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     const BATCH_SIZE: isize = 50;
 
@@ -246,10 +297,9 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
     let keys: Vec<RawPayload> = conn.lrange(processing_queue_key, -1, -1).await?;
 
+    let deadline = OffsetDateTime::now_utc() - ack_deadline;
     // If the key is older than now, it means we should be processing keys
-    let validity_limit = KsuidMs::new(Some(OffsetDateTime::now_utc() - ack_deadline), None)
-        .to_string()
-        .into_bytes();
+    let validity_limit = KsuidMs::new(Some(deadline), None).to_string().into_bytes();
 
     if !keys.is_empty() && keys[0] <= validity_limit {
         let keys: Vec<RawPayload> = conn.lrange(processing_queue_key, -BATCH_SIZE, -1).await?;
@@ -268,6 +318,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                     }
                     _ => {
                         trace!(
+                            ?deadline,
                             num_receives = num_receives,
                             "Pushing back overdue task to queue"
                         );
@@ -282,8 +333,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
             }
         }
     } else {
-        // Sleep before attempting to fetch again if nothing was found
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(poll_interval).await;
     }
 
     Ok(())
