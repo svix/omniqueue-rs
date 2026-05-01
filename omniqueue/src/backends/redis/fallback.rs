@@ -17,6 +17,7 @@ use super::{
 use crate::{queue::Acker, Delivery, QueueError, Result};
 
 static REFRESH_TIMESTAMP: OnceLock<redis::Script> = OnceLock::new();
+static REENQUEUE_SCRIPT: OnceLock<redis::Script> = OnceLock::new();
 
 fn refresh_timestamp_script() -> &'static redis::Script {
     REFRESH_TIMESTAMP.get_or_init(|| {
@@ -26,6 +27,27 @@ fn refresh_timestamp_script() -> &'static redis::Script {
               local refreshed_payload = ARGV[2]
               redis.call('LPUSH', processing_queue, refreshed_payload)
               redis.call('LREM',  processing_queue, 1, old_payload)",
+        )
+    })
+}
+
+fn reenqueue_script() -> &'static redis::Script {
+    REENQUEUE_SCRIPT.get_or_init(|| {
+        // RPUSH before LREM so a crash never loses the message (it ends up in
+        // both queues rather than neither). If LREM returns 0, another process
+        // already handled this item, so we undo our RPUSH. new_payload carries
+        // a unique KSUID so the undo-LREM only removes the payload we just pushed.
+        redis::Script::new(
+            "local processing_queue = KEYS[1]
+             local dest_queue       = KEYS[2]
+             local old_payload      = ARGV[1]
+             local new_payload      = ARGV[2]
+             redis.call('RPUSH', dest_queue, new_payload)
+             local removed = redis.call('LREM', processing_queue, 1, old_payload)
+             if removed == 0 then
+                 redis.call('LREM', dest_queue, 1, new_payload)
+             end
+             return removed",
         )
     })
 }
@@ -314,7 +336,13 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                             num_receives = num_receives,
                             "Maximum attempts reached for message, moving item to DLQ",
                         );
-                        send_to_dlq(pool, dlq_config, internal.payload).await?;
+                        reenqueue_script()
+                            .key(processing_queue_key)
+                            .key(&dlq_config.queue_key)
+                            .arg(&key)
+                            .arg(internal.payload)
+                            .invoke_async::<()>(&mut *conn)
+                            .await?;
                     }
                     _ => {
                         trace!(
@@ -322,14 +350,15 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
                             num_receives = num_receives,
                             "Pushing back overdue task to queue"
                         );
-                        let _: () = conn
-                            .rpush(queue_key, internal_to_list_payload(internal))
+                        reenqueue_script()
+                            .key(processing_queue_key)
+                            .key(queue_key)
+                            .arg(&key)
+                            .arg(internal_to_list_payload(internal))
+                            .invoke_async::<()>(&mut *conn)
                             .await?;
                     }
                 }
-
-                // We use LREM to be sure we only delete the keys we should be deleting
-                let _: () = conn.lrem(processing_queue_key, 1, &key).await?;
             }
         }
     } else {
