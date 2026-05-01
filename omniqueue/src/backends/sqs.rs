@@ -39,6 +39,7 @@ pub struct SqsConfigFull {
     queue_dsn: String,
     override_endpoint: bool,
     sqs_config: Option<aws_sdk_sqs::Config>,
+    max_payload_size: usize,
 }
 
 impl SqsConfigFull {
@@ -76,6 +77,7 @@ impl From<SqsConfig> for SqsConfigFull {
             queue_dsn,
             override_endpoint,
             sqs_config: None,
+            max_payload_size: MAX_PAYLOAD_SIZE,
         }
     }
 }
@@ -92,6 +94,7 @@ impl From<String> for SqsConfigFull {
             queue_dsn: dsn,
             override_endpoint: false,
             sqs_config: None,
+            max_payload_size: MAX_PAYLOAD_SIZE,
         }
     }
 }
@@ -140,6 +143,7 @@ impl QueueBackend for SqsBackend {
         let producer = SqsProducer {
             client: client.clone(),
             queue_dsn: cfg.queue_dsn.clone(),
+            max_payload_size: cfg.max_payload_size,
         };
 
         let consumer = SqsConsumer {
@@ -157,6 +161,7 @@ impl QueueBackend for SqsBackend {
         let producer = SqsProducer {
             client,
             queue_dsn: cfg.queue_dsn,
+            max_payload_size: cfg.max_payload_size,
         };
 
         Ok(producer)
@@ -188,6 +193,18 @@ impl QueueBuilder<SqsBackend> {
     /// Configure whether to override the AWS endpoint URL with the queue DSN.
     pub fn override_endpoint(mut self, value: bool) -> Self {
         self.config.override_endpoint = value;
+        self
+    }
+
+    /// Configure the maximum message size.
+    ///
+    /// Any send attempts over this size will return
+    /// `QueueError::PayloadTooLarge` without ever going to SQS.
+    ///
+    /// By default, this is the maximum configurable payload size as per SQS
+    /// documentation.
+    pub fn max_payload_size(mut self, value: usize) -> Self {
+        self.config.max_payload_size = value;
         self
     }
 }
@@ -272,6 +289,7 @@ impl Acker for SqsAcker {
 pub struct SqsProducer {
     client: Client,
     queue_dsn: String,
+    max_payload_size: usize,
 }
 
 impl SqsProducer {
@@ -293,9 +311,9 @@ impl SqsProducer {
         )
     )]
     pub async fn send_raw_scheduled(&self, payload: &str, delay: Duration) -> Result<()> {
-        if payload.len() > MAX_PAYLOAD_SIZE {
+        if payload.len() > self.max_payload_size {
             return Err(QueueError::PayloadTooLarge {
-                limit: MAX_PAYLOAD_SIZE,
+                limit: self.max_payload_size,
                 actual: payload.len(),
             });
         }
@@ -337,9 +355,9 @@ impl SqsProducer {
             .collect::<Result<_>>()?;
 
         for payload in &payloads {
-            if payload.len() > MAX_PAYLOAD_SIZE {
+            if payload.len() > self.max_payload_size {
                 return Err(QueueError::PayloadTooLarge {
-                    limit: MAX_PAYLOAD_SIZE,
+                    limit: self.max_payload_size,
                     actual: payload.len(),
                 });
             }
