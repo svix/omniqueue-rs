@@ -649,3 +649,57 @@ async fn test_ack_deadline_processing() {
         .unwrap()
         .is_empty());
 }
+
+#[tokio::test]
+async fn test_concurrent_reenqueue_no_duplicates() {
+    let queue_key: String = std::iter::repeat_with(fastrand::alphanumeric)
+        .take(8)
+        .collect();
+    let processing_key = format!("{queue_key}_processing");
+    let ack_deadline_ms: i64 = 200;
+
+    let make_builder = || {
+        let config = RedisConfig {
+            dsn: ROOT_URL.to_owned(),
+            max_connections: 8,
+            reinsert_on_nack: false,
+            queue_key: queue_key.clone(),
+            delayed_queue_key: format!("{queue_key}::delayed"),
+            delayed_lock_key: format!("{queue_key}::delayed_lock"),
+            consumer_group: "test_cg".to_owned(),
+            consumer_name: "test_cn".to_owned(),
+            payload_key: "payload".to_owned(),
+            ack_deadline_ms,
+            dlq_config: None,
+            sentinel_config: None,
+        };
+        RedisBackend::builder(config)
+            .use_redis_streams(false)
+            .processing_queue_key(processing_key.clone())
+            .background_task_poll_interval(Duration::from_millis(10))
+    };
+
+    // 20 concurrent workers
+    let (p, mut c) = make_builder().build_pair().await.unwrap();
+    let mut extra: Vec<_> = Vec::new();
+    for _ in 0..19 {
+        extra.push(make_builder().build_pair().await.unwrap());
+    }
+
+    p.send_raw(b"test payload").await.unwrap();
+    drop(c.receive().await.unwrap());
+
+    tokio::time::sleep(Duration::from_millis(ack_deadline_ms as u64 + 200)).await;
+
+    let mut conn = Client::open(ROOT_URL)
+        .unwrap()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let main_len: isize = conn.llen(&queue_key).await.unwrap();
+    let proc_len: isize = conn.llen(&processing_key).await.unwrap();
+    let _: () = conn.del(&[&queue_key, &processing_key]).await.unwrap();
+
+    assert_eq!(main_len, 1);
+    assert_eq!(proc_len, 0);
+}
