@@ -45,7 +45,7 @@ pub use bb8_redis::RedisConnectionManager;
 use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo, TlsMode};
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
 use serde::Serialize;
-use svix_ksuid::KsuidLike;
+use svix_ksuid::{KsuidLike, KsuidMs};
 use thiserror::Error;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
@@ -160,6 +160,14 @@ impl From<InternalPayload<'_>> for InternalPayloadOwned {
     }
 }
 
+fn list_entry_id(payload: &[u8]) -> &[u8] {
+    let end = payload
+        .iter()
+        .position(|&b| b == b'#' || b == b'|')
+        .unwrap_or(payload.len());
+    &payload[..end]
+}
+
 fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
     // All information is stored in the key in which the ID and the [optional]
     // number of prior receives are separated by a `#`, and the JSON
@@ -172,11 +180,7 @@ fn internal_from_list(payload: &[u8]) -> Result<InternalPayload<'_>> {
         .position(|&byte| byte == b'|')
         .ok_or_else(|| QueueError::Generic("Improper key format".into()))?;
 
-    let id_end_pos = match count_sep_pos {
-        Some(count_sep_pos) if count_sep_pos < payload_sep_pos => count_sep_pos,
-        _ => payload_sep_pos,
-    };
-    let _id = str::from_utf8(&payload[..id_end_pos])
+    let _id = str::from_utf8(list_entry_id(payload))
         .map_err(|_| QueueError::Generic("Non-UTF8 key ID".into()))?;
 
     // This should be backward-compatible with messages that don't include
@@ -352,6 +356,7 @@ pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
     config: RedisConfig,
     use_redis_streams: bool,
     processing_queue_key: Option<String>,
+    background_task_poll_interval: Option<Duration>,
     _phantom: PhantomData<fn() -> (R, S)>,
 }
 
@@ -367,6 +372,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             config,
             use_redis_streams: true,
             processing_queue_key: None,
+            background_task_poll_interval: None,
             _phantom: PhantomData,
         }
     }
@@ -376,6 +382,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             config: self.config,
             use_redis_streams: self.use_redis_streams,
             processing_queue_key: self.processing_queue_key,
+            background_task_poll_interval: self.background_task_poll_interval,
             _phantom: PhantomData,
         }
     }
@@ -406,6 +413,11 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
     /// queue keys.
     pub fn use_redis_streams(mut self, value: bool) -> Self {
         self.use_redis_streams = value;
+        self
+    }
+
+    pub fn background_task_poll_interval(mut self, interval: Duration) -> Self {
+        self.background_task_poll_interval = Some(interval);
         self
     }
 
@@ -456,6 +468,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 consumer_name: self.config.consumer_name,
                 payload_key: self.config.payload_key,
                 use_redis_streams: self.use_redis_streams,
+                ack_deadline: Duration::from_millis(self.config.ack_deadline_ms as u64),
                 _background_tasks: background_tasks.clone(),
                 dlq_config: self.config.dlq_config.clone(),
             },
@@ -501,6 +514,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
             consumer_name: self.config.consumer_name,
             payload_key: self.config.payload_key,
             use_redis_streams: self.use_redis_streams,
+            ack_deadline: Duration::from_millis(self.config.ack_deadline_ms as u64),
             _background_tasks,
             dlq_config: self.config.dlq_config,
         })
@@ -569,12 +583,16 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
                 self.config.dlq_config.clone(),
             ));
         } else {
+            let poll_interval = self
+                .background_task_poll_interval
+                .unwrap_or(Duration::from_millis(500));
             join_set.spawn(fallback::background_task_processing(
                 redis.clone(),
                 self.config.queue_key.to_owned(),
                 self.get_processing_queue_key(),
                 self.config.ack_deadline_ms,
                 self.config.dlq_config.clone(),
+                poll_interval,
             ));
         }
 
@@ -827,7 +845,7 @@ fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
 /// - don't only get delivered once instead of N times.
 /// - don't replace each other's "delivery due" timestamp.
 fn delayed_key_id() -> String {
-    svix_ksuid::Ksuid::new(None, None).to_base62()
+    KsuidMs::new(None, None).to_string()
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
@@ -838,6 +856,7 @@ pub struct RedisConsumer<M: ManageConnection> {
     consumer_name: String,
     payload_key: String,
     use_redis_streams: bool,
+    ack_deadline: Duration,
     _background_tasks: Arc<JoinSet<Result<()>>>,
     dlq_config: Option<DeadLetterQueueConfig>,
 }
