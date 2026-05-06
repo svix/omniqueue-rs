@@ -100,31 +100,15 @@ services:
     image: docker.io/redis:7
     ports:
       - "6388:6379"
-    command:
-      [
-        "redis-server",
-        "--appendonly",
-        "yes",
-        "--replicaof",
-        "redis-master-0",
-        "6379",
-        "--repl-diskless-load",
-        "on-empty-db",
-        "--protected-mode",
-        "no"
-      ]
+    command: ["redis-server", "--appendonly", "yes", "--replicaof", "redis-master-0", "6379", "--repl-diskless-load", "on-empty-db", "--protected-mode", "no"]
 
   gcp-pubsub:
     image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
     ports:
       - "8085:8085"
-    command: [
-      "gcloud", "beta", "emulators", "pubsub", "start",
-      "--project", "local-project",
-      "--host-port", "0.0.0.0:8085"
-    ]
+    command: ["gcloud", "beta", "emulators", "pubsub", "start", "--project", "local-project", "--host-port", "0.0.0.0:8085"]
 
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite
     ports:
-     - "10001:10001"
+      - "10001:10001"
