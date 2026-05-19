@@ -138,7 +138,7 @@ impl GcpPubSubProducer {
         // connection open indefinitely.
         if !topic.exists(None).await.map_err(QueueError::generic)? {
             return Err(QueueError::Generic(
-                format!("topic {} does not exist", &self.topic_id).into(),
+                format!("topic {} does not exist", self.topic_id).into(),
             ));
         }
 
@@ -311,7 +311,7 @@ async fn subscription(client: &Client, subscription_id: &str) -> Result<Subscrip
         .map_err(QueueError::generic)?
     {
         return Err(QueueError::Generic(
-            format!("subscription {} does not exist", &subscription_id).into(),
+            format!("subscription {} does not exist", subscription_id).into(),
         ));
     }
     Ok(subscription)

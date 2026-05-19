@@ -845,7 +845,7 @@ fn unix_timestamp(time: SystemTime) -> Result<u64, SystemTimeError> {
 /// - don't only get delivered once instead of N times.
 /// - don't replace each other's "delivery due" timestamp.
 fn delayed_key_id() -> String {
-    KsuidMs::new(None, None).to_string()
+    KsuidMs::now(None).to_string()
 }
 
 pub struct RedisConsumer<M: ManageConnection> {
