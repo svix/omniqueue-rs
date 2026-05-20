@@ -1,12 +1,14 @@
 //! Implementation of the main queue using two lists instead of redis streams,
 //! for compatibility with redis versions older than 6.2.0.
 
-use std::{sync::OnceLock, time::Duration};
+use std::{
+    sync::OnceLock,
+    time::{Duration, SystemTime},
+};
 
 use bb8::ManageConnection;
 use redis::AsyncCommands;
 use svix_ksuid::{KsuidLike as _, KsuidMs};
-use time::OffsetDateTime;
 use tracing::{error, trace, warn};
 
 use super::{
@@ -54,7 +56,7 @@ fn reenqueue_script() -> &'static redis::Script {
 
 fn payload_is_older_than(raw_payload: &[u8], threshold: Duration) -> bool {
     let id = list_entry_id(raw_payload);
-    let threshold_ksuid = KsuidMs::new(Some(OffsetDateTime::now_utc() - threshold), None)
+    let threshold_ksuid = KsuidMs::new(Some(SystemTime::now() - threshold), None)
         .to_string()
         .into_bytes();
     id <= threshold_ksuid.as_slice()
@@ -319,7 +321,7 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
     let keys: Vec<RawPayload> = conn.lrange(processing_queue_key, -1, -1).await?;
 
-    let deadline = OffsetDateTime::now_utc() - ack_deadline;
+    let deadline = SystemTime::now() - ack_deadline;
     // If the key is older than now, it means we should be processing keys
     let validity_limit = KsuidMs::new(Some(deadline), None).to_string().into_bytes();
 

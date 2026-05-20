@@ -140,9 +140,8 @@ impl RabbitMqProducer {
         #[cfg(feature = "rabbitmq-with-message-ids")]
         {
             use svix_ksuid::{KsuidLike as _, KsuidMs};
-            use time::OffsetDateTime;
 
-            let id = &KsuidMs::new(Some(OffsetDateTime::now_utc()), None);
+            let id = KsuidMs::now(None);
             properties = properties.with_message_id(id.to_string().into());
         }
         if let Some(headers) = headers {
