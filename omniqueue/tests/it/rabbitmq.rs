@@ -25,16 +25,19 @@ async fn make_test_queue(
     prefetch_count: Option<u16>,
     reinsert_on_nack: bool,
 ) -> QueueBuilder<RabbitMqBackend> {
-    let options = ConnectionProperties::default()
-        .with_connection_name(
-            std::iter::repeat_with(fastrand::alphanumeric)
-                .take(8)
-                .collect::<String>()
-                .into(),
-        )
-        .with_executor(tokio_executor_trait::Tokio::current())
-        .with_reactor(tokio_reactor_trait::Tokio::current());
-    let connection = Connection::connect(MQ_URI, options.clone()).await.unwrap();
+    let options = ConnectionProperties::default().with_connection_name(
+        std::iter::repeat_with(fastrand::alphanumeric)
+            .take(8)
+            .collect::<String>()
+            .into(),
+    );
+    let connection = Connection::connect_with_runtime(
+        MQ_URI,
+        options.clone(),
+        async_rs::Runtime::tokio_current(),
+    )
+    .await
+    .unwrap();
     let channel = connection.create_channel().await.unwrap();
 
     let queue_name: String = std::iter::repeat_with(fastrand::alphanumeric)
@@ -43,7 +46,7 @@ async fn make_test_queue(
 
     channel
         .queue_declare(
-            &queue_name,
+            queue_name.as_str().into(),
             QueueDeclareOptions {
                 auto_delete: true,
                 ..Default::default()
@@ -61,7 +64,7 @@ async fn make_test_queue(
     );
     channel
         .exchange_declare(
-            DELAY_EXCHANGE,
+            DELAY_EXCHANGE.into(),
             ExchangeKind::Custom("x-delayed-message".to_string()),
             ExchangeDeclareOptions {
                 auto_delete: true,
@@ -73,9 +76,9 @@ async fn make_test_queue(
         .unwrap();
     channel
         .queue_bind(
-            &queue_name,
-            DELAY_EXCHANGE,
-            &queue_name,
+            queue_name.as_str().into(),
+            DELAY_EXCHANGE.into(),
+            queue_name.as_str().into(),
             Default::default(),
             Default::default(),
         )
