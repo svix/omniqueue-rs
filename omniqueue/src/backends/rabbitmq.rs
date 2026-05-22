@@ -3,13 +3,12 @@ use std::time::{Duration, Instant};
 use futures_util::{FutureExt, StreamExt};
 use lapin::types::AMQPValue;
 pub use lapin::{
-    acker::Acker as LapinAcker,
     options::{
         BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
         BasicQosOptions,
     },
     types::FieldTable,
-    BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
+    Acker as LapinAcker, BasicProperties, Channel, Connection, ConnectionProperties, Consumer,
 };
 use serde::Serialize;
 
@@ -62,8 +61,8 @@ async fn consumer(conn: &Connection, cfg: RabbitMqConfig) -> Result<RabbitMqCons
     Ok(RabbitMqConsumer {
         consumer: channel_rx
             .basic_consume(
-                &cfg.consume_queue,
-                &cfg.consumer_tag,
+                cfg.consume_queue.as_str().into(),
+                cfg.consumer_tag.as_str().into(),
                 cfg.consume_options,
                 cfg.consume_arguments.clone(),
             )
@@ -150,8 +149,8 @@ impl RabbitMqProducer {
 
         self.channel
             .basic_publish(
-                &self.exchange,
-                &self.routing_key,
+                self.exchange.as_str().into(),
+                self.routing_key.as_str().into(),
                 self.options,
                 payload,
                 properties,
