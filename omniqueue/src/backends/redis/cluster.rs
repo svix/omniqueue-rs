@@ -1,7 +1,7 @@
 use redis::{
     cluster::{ClusterClient, ClusterClientBuilder},
     cluster_routing::{MultipleNodeRoutingInfo, ResponsePolicy, RoutingInfo},
-    ErrorKind, FromRedisValue, IntoConnectionInfo, RedisError,
+    ErrorKind, FromRedisValue, IntoConnectionInfo, RedisError, ServerErrorKind,
 };
 
 /// ConnectionManager that implements `bb8::ManageConnection` and supports
@@ -32,17 +32,19 @@ impl bb8::ManageConnection for RedisClusterConnectionManager {
     async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
         let pong = conn
             .route_command(
-                &redis::cmd("PING"),
+                redis::cmd("PING"),
                 RoutingInfo::MultiNode((
                     MultipleNodeRoutingInfo::AllMasters,
                     Some(ResponsePolicy::OneSucceeded),
                 )),
             )
-            .await
-            .and_then(|v| String::from_redis_value(&v))?;
-        match pong.as_str() {
+            .await?;
+        match String::from_redis_value(pong)?.as_str() {
             "PONG" => Ok(()),
-            _ => Err((ErrorKind::ResponseError, "ping request").into()),
+            _ => {
+                let kind = ErrorKind::Server(ServerErrorKind::ResponseError);
+                Err((kind, "ping request").into())
+            }
         }
     }
 
