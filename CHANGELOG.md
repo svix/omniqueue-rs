@@ -1,3 +1,9 @@
+# Upcoming
+
+## Breaking changes
+
+- Remove support for Azure queues due to the deprecation of the `azure_storage_queues` crate
+
 # 0.3.0
 
 ## Breaking changes
