@@ -17,3 +17,8 @@ updates:
     schedule:
       interval: "weekly"
       day: "wednesday"
+    groups:
+      workflows:
+        applies-to: version-updates
+        patterns:
+          - '*'
