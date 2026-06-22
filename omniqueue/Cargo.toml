@@ -12,8 +12,6 @@ edition = "2021"
 [dependencies]
 aws-config = { version = "1.1.5", default-features = false, features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.13.0", optional = true, default-features = false, features = ["default-https-client", "rt-tokio"] }
-azure_storage = { version = "0.21.0", optional = true }
-azure_storage_queues = { version = "0.21.0", optional = true }
 bb8 = { version = "0.9.0", optional = true }
 bb8-redis = { version = "0.24.0", optional = true }
 bytesize = "2.0.1"
@@ -49,5 +47,4 @@ redis = ["dep:bb8", "dep:bb8-redis", "dep:redis", "dep:svix-ksuid"]
 redis_cluster = ["redis", "redis/cluster-async"]
 redis_sentinel = ["redis", "redis/sentinel"]
 sqs = ["dep:aws-config", "dep:aws-sdk-sqs", "dep:futures-util"]
-azure_queue_storage = ["dep:azure_storage", "dep:azure_storage_queues"]
 beta = []
