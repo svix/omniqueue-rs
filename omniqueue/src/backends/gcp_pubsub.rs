@@ -283,7 +283,7 @@ impl GcpPubSubConsumer {
         // is only possible via a `ReceiveMessage`. This means we either need
         // to hold 2 copies of the payload, or move the bytes out so they can be
         // returned _outside of the Acker_.
-        let payload = recv_msg.message.data.drain(..).collect();
+        let payload = std::mem::take(&mut recv_msg.message.data);
 
         Delivery::new(
             payload,
