@@ -1,4 +1,3 @@
-version: "3.7"
 services:
   rabbitmq:
     image: docker.io/rabbitmq:3.11.11-management-alpine
