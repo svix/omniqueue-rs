@@ -17,7 +17,6 @@
 //! * RabbitMQ
 //! * Redis
 //! * Amazon SQS
-//! * Azure Queue Storage
 //!
 //! ## How to Use Omniqueue
 //!
