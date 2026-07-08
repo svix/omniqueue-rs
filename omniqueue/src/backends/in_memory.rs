@@ -213,7 +213,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::InMemoryBackend;
-    use crate::QueueProducer;
+    use crate::{QueueError, QueueProducer};
 
     #[derive(Clone, Copy, Debug, Eq, Deserialize, PartialEq, Serialize)]
     struct TypeA {
@@ -409,5 +409,81 @@ mod tests {
         );
         assert_eq!(c.len(), 0);
         assert!(c.is_empty());
+    }
+
+    /// Nacking a delivery should re-enqueue it so it is received again, and a
+    /// subsequent ack should consume it for good.
+    #[tokio::test]
+    async fn test_nack_re_enqueues() {
+        let payload = ExType { a: 42 };
+
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+
+        p.send_serde_json(&payload).await.unwrap();
+
+        // Receiving then nacking should put the message back on the queue.
+        let delivery = c.receive().await.unwrap();
+        assert_eq!(
+            Some(&payload),
+            delivery.payload_serde_json().unwrap().as_ref()
+        );
+        delivery.nack().await.unwrap();
+
+        // The nacked message should be delivered again.
+        let redelivery = c.receive().await.unwrap();
+        assert_eq!(
+            Some(&payload),
+            redelivery.payload_serde_json().unwrap().as_ref()
+        );
+
+        // Acking the redelivery should consume it, leaving the queue empty.
+        redelivery.ack().await.unwrap();
+        assert!(c
+            .receive_all(1, Duration::from_millis(1))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    /// `take_payload` should hand out the bytes once, after which every payload
+    /// accessor yields nothing.
+    #[tokio::test]
+    async fn test_take_payload_consumes_bytes() {
+        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+
+        p.send_bytes(b"hello").await.unwrap();
+
+        let mut delivery = c.receive().await.unwrap();
+        assert_eq!(delivery.take_payload().as_deref(), Some(&b"hello"[..]));
+
+        // Once taken, the payload is gone and further reads return nothing.
+        assert!(delivery.take_payload().is_none());
+        assert!(delivery.borrow_payload().is_none());
+        assert_eq!(delivery.payload_serde_json::<u8>().unwrap(), None);
+    }
+
+    /// The in-memory backend can only be built as a pair; requesting a single
+    /// half should fail.
+    #[tokio::test]
+    async fn test_split_halves_unsupported() {
+        assert!(matches!(
+            InMemoryBackend::builder().build_producer().await,
+            Err(QueueError::CannotCreateHalf)
+        ));
+        assert!(matches!(
+            InMemoryBackend::builder().build_consumer().await,
+            Err(QueueError::CannotCreateHalf)
+        ));
+    }
+
+    /// The in-memory backend has no dead-letter queue, so redriving is
+    /// unsupported.
+    #[tokio::test]
+    async fn test_redrive_dlq_unsupported() {
+        let (p, _c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        assert!(matches!(
+            p.redrive_dlq().await,
+            Err(QueueError::Unsupported(_))
+        ));
     }
 }
