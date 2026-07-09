@@ -9,7 +9,7 @@ use lapin::{
 };
 use omniqueue::{
     backends::{RabbitMqBackend, RabbitMqConfig},
-    QueueBuilder,
+    QueueBuilder, QueueError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -310,4 +310,109 @@ async fn test_scheduled() {
     assert!(now.elapsed() >= delay);
     assert!(now.elapsed() < delay * 2);
     assert_eq!(Some(payload1), delivery.payload_serde_json().unwrap());
+}
+
+/// With `requeue_on_nack` enabled, a nacked delivery is put back on the queue
+/// and redelivered.
+#[tokio::test]
+async fn test_nack_requeues() {
+    let payload = ExType { a: 42 };
+    let (p, mut c) = make_test_queue(None, true)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    let delivery = c.receive().await.unwrap();
+    assert_eq!(
+        delivery.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload
+    );
+    delivery.nack().await.unwrap();
+
+    // The requeued message should be delivered again.
+    let redelivery = c.receive().await.unwrap();
+    assert_eq!(
+        redelivery.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload
+    );
+    redelivery.ack().await.unwrap();
+}
+
+/// With `requeue_on_nack` disabled, a nacked delivery is discarded rather than
+/// redelivered.
+#[tokio::test]
+async fn test_nack_without_requeue_drops() {
+    let payload = ExType { a: 42 };
+    let (p, mut c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    let delivery = c.receive().await.unwrap();
+    assert_eq!(
+        delivery.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload
+    );
+    delivery.nack().await.unwrap();
+
+    // Nothing should be redelivered.
+    let deadline = Duration::from_secs(1);
+    assert!(c.receive_all(1, deadline).await.unwrap().is_empty());
+}
+
+/// With a prefetch count of 1, the consumer is not delivered a second message
+/// until the first has been acked.
+#[tokio::test]
+async fn test_prefetch_count_limits_unacked() {
+    let payload1 = ExType { a: 1 };
+    let payload2 = ExType { a: 2 };
+    let (p, mut c) = make_test_queue(Some(1), false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
+
+    p.send_serde_json(&payload1).await.unwrap();
+    p.send_serde_json(&payload2).await.unwrap();
+
+    // The first message is delivered.
+    let d1 = c.receive().await.unwrap();
+    assert_eq!(
+        d1.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload1
+    );
+
+    // With prefetch=1 and the first still unacked, the second is held back.
+    let deadline = Duration::from_secs(1);
+    assert!(c.receive_all(1, deadline).await.unwrap().is_empty());
+
+    // Once the first is acked, the second is delivered.
+    d1.ack().await.unwrap();
+    let d2 = c.receive().await.unwrap();
+    assert_eq!(
+        d2.payload_serde_json::<ExType>().unwrap().unwrap(),
+        payload2
+    );
+    d2.ack().await.unwrap();
+}
+
+/// RabbitMQ does not support redriving a dead-letter queue.
+#[tokio::test]
+async fn test_redrive_dlq_unsupported() {
+    let (p, _c) = make_test_queue(None, false)
+        .await
+        .build_pair()
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        p.redrive_dlq().await,
+        Err(QueueError::Unsupported(_))
+    ));
 }
