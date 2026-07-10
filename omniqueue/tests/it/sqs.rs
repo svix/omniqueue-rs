@@ -3,6 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use assert_matches::assert_matches;
 use aws_sdk_sqs::{types::QueueAttributeName, Client};
 use omniqueue::{
     backends::{SqsBackend, SqsConfig, SqsConsumer},
@@ -63,16 +64,32 @@ async fn make_test_queue(visibility_timeout: Option<Duration>) -> QueueBuilder<S
     SqsBackend::builder(make_test_queue_config(visibility_timeout).await)
 }
 
+/// A hand-built `aws_sdk_sqs::Config` addressing `endpoint_url`.
+///
+/// `Config::builder` reads nothing from the environment, so the region and
+/// credentials have to be supplied here even though they repeat what
+/// `DEFAULT_CFG` puts into the environment.
+fn sdk_config(endpoint_url: &str) -> aws_sdk_sqs::Config {
+    use aws_sdk_sqs::config::{BehaviorVersion, Credentials, Region};
+
+    aws_sdk_sqs::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("localhost"))
+        .credentials_provider(Credentials::new("x", "x", None, None, "test"))
+        .endpoint_url(endpoint_url)
+        .build()
+}
+
 /// Receives `count` deliveries, which SQS hands out at most 10 at a time.
 ///
 /// Gives up early if a receive comes back empty, so that a test asserting on
 /// the count fails rather than hangs.
 async fn receive_n(c: &SqsConsumer, count: usize) -> Vec<Delivery> {
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
     let mut deliveries = Vec::with_capacity(count);
 
     while deliveries.len() < count {
-        let batch = c.receive_all(10, deadline).await.unwrap();
+        let batch = c.receive_all(10, timeout).await.unwrap();
         if batch.is_empty() {
             break;
         }
@@ -276,7 +293,7 @@ async fn test_nack_is_a_noop_and_redelivery_awaits_visibility_timeout() {
     d.nack().await.unwrap();
 
     // The nack did not put the message back: it is still invisible.
-    assert!(matches!(c.receive().await.unwrap_err(), QueueError::NoData));
+    assert_matches!(c.receive().await.unwrap_err(), QueueError::NoData);
 
     // Once the visibility timeout lapses, the message comes back on its own.
     tokio::time::sleep(VISIBILITY_TIMEOUT + Duration::from_millis(500)).await;
@@ -304,7 +321,7 @@ async fn test_ack_prevents_redelivery() {
 
     tokio::time::sleep(VISIBILITY_TIMEOUT + Duration::from_millis(500)).await;
 
-    assert!(matches!(c.receive().await.unwrap_err(), QueueError::NoData));
+    assert_matches!(c.receive().await.unwrap_err(), QueueError::NoData);
 }
 
 /// `set_ack_deadline` maps onto SQS's `ChangeMessageVisibility`, extending the
@@ -327,7 +344,7 @@ async fn test_set_ack_deadline_extends_the_visibility_timeout() {
     // Well past the queue's own visibility timeout, but inside the extended
     // deadline, so the message must not be redelivered.
     tokio::time::sleep(VISIBILITY_TIMEOUT + Duration::from_millis(500)).await;
-    assert!(matches!(c.receive().await.unwrap_err(), QueueError::NoData));
+    assert_matches!(c.receive().await.unwrap_err(), QueueError::NoData);
 
     d.ack().await.unwrap();
 }
@@ -403,15 +420,15 @@ async fn test_send_raw_rejects_oversized_payload() {
         .unwrap();
 
     let err = p.send_raw("123456789").await.unwrap_err();
-    assert!(matches!(
+    assert_matches!(
         err,
         QueueError::PayloadTooLarge {
             limit: 8,
             actual: 9
         }
-    ));
+    );
 
-    assert!(matches!(c.receive().await.unwrap_err(), QueueError::NoData));
+    assert_matches!(c.receive().await.unwrap_err(), QueueError::NoData);
 }
 
 /// For batches, every payload is size-checked before the first chunk is
@@ -433,10 +450,10 @@ async fn test_send_raw_batch_rejects_oversized_payload_before_sending() {
     payloads.push(Box::new("far too large".to_owned()));
 
     let err = p.send_raw_batch(payloads).await.unwrap_err();
-    assert!(matches!(err, QueueError::PayloadTooLarge { .. }));
+    assert_matches!(err, QueueError::PayloadTooLarge { .. });
 
     // Not even the first chunk went out.
-    assert!(matches!(c.receive().await.unwrap_err(), QueueError::NoData));
+    assert_matches!(c.receive().await.unwrap_err(), QueueError::NoData);
 }
 
 /// A delay too large for SQS's `i32` delay seconds is rejected without a round
@@ -449,7 +466,7 @@ async fn test_send_scheduled_rejects_too_large_delay() {
         .send_raw_scheduled("{}", Duration::from_secs(u32::MAX.into()))
         .await
         .unwrap_err();
-    assert!(matches!(err, QueueError::Generic(_)));
+    assert_matches!(err, QueueError::Generic(_));
 }
 
 /// `send_bytes_batch` funnels into the overridden `send_raw_batch`, so it is
@@ -499,7 +516,7 @@ async fn test_set_ack_deadline_rejects_too_large_duration() {
         .set_ack_deadline(Duration::from_secs(u32::MAX.into()))
         .await
         .unwrap_err();
-    assert!(matches!(err, QueueError::Generic(_)));
+    assert_matches!(err, QueueError::Generic(_));
 }
 
 /// `override_endpoint` points the AWS client at the queue DSN. A bare DSN
@@ -522,24 +539,58 @@ async fn test_override_endpoint_config_option() {
     d.ack().await.unwrap();
 }
 
-/// An explicitly supplied `aws_sdk_sqs::Config` is used as-is, in preference to
-/// both the environment and `override_endpoint`.
+/// An explicitly supplied `aws_sdk_sqs::Config` is used in place of the
+/// environment.
+///
+/// The endpoint is what makes that observable: the fallback in
+/// `take_sqs_config` calls `load_from_env`, which sets no endpoint at all, so
+/// dropping `sqs_config` here points the client at real AWS, where the region
+/// fails to resolve.
 #[tokio::test]
-async fn test_sqs_config_config_option() {
-    use aws_sdk_sqs::config::{BehaviorVersion, Credentials, Region};
-
+async fn test_sqs_config_is_used_instead_of_the_environment() {
     let payload = ExType { a: 9 };
     let queue_dsn = make_test_queue_config(None).await.queue_dsn;
 
-    let sqs_config = aws_sdk_sqs::Config::builder()
-        .behavior_version(BehaviorVersion::latest())
-        .region(Region::new("localhost"))
-        .credentials_provider(Credentials::new("x", "x", None, None, "test"))
-        .endpoint_url(ROOT_URL)
-        .build();
-
     let (p, c) = SqsBackend::builder(queue_dsn)
-        .sqs_config(sqs_config)
+        .sqs_config(sdk_config(ROOT_URL))
+        .build_pair()
+        .await
+        .unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    let d = c.receive().await.unwrap();
+    assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
+    d.ack().await.unwrap();
+}
+
+/// `take_sqs_config` consults `sqs_config` before `override_endpoint`, so an
+/// explicit config wins even when `override_endpoint` would have pointed the
+/// client somewhere that works.
+#[tokio::test]
+async fn test_sqs_config_takes_precedence_over_override_endpoint() {
+    let payload = ExType { a: 10 };
+    let queue_dsn = make_test_queue_config(None).await.queue_dsn;
+
+    // Nothing is listening on port 1. A failed send therefore means the explicit
+    // config is what reached the wire: `override_endpoint` on its own would have
+    // addressed the live queue.
+    let p = SqsBackend::builder(queue_dsn.clone())
+        .override_endpoint(true)
+        .sqs_config(sdk_config("http://127.0.0.1:1"))
+        .build_producer()
+        .await
+        .unwrap();
+
+    assert_matches!(
+        p.send_serde_json(&payload).await.unwrap_err(),
+        QueueError::Generic(_)
+    );
+
+    // Positive control: the same builder without `sqs_config` does reach the
+    // queue, so the failure above is precedence and not a broken fixture.
+    let (p, c) = SqsBackend::builder(queue_dsn)
+        .override_endpoint(true)
         .build_pair()
         .await
         .unwrap();
@@ -575,7 +626,7 @@ async fn test_redrive_dlq_unsupported() {
     let (p, _c) = make_test_queue(None).await.build_pair().await.unwrap();
 
     let err = p.redrive_dlq().await.unwrap_err();
-    assert!(matches!(err, QueueError::Unsupported(_)));
+    assert_matches!(err, QueueError::Unsupported(_));
 }
 
 /// SQS caps `ReceiveMessage` at 10 messages per call.
