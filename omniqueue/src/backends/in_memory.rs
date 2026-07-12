@@ -1,3 +1,36 @@
+//! In-memory queue implementation, meant for tests and local development.
+//!
+//! # The Implementation
+//!
+//! Messages are passed over an unbounded in-process channel. Nothing is
+//! persisted, and no other process can see the queue. There is nothing to
+//! configure, so [`InMemoryBackend::builder`] takes no arguments.
+//!
+//! The producer and consumer are the two ends of one channel, so they can only
+//! be created together. `build_producer` and `build_consumer` both return
+//! [`QueueError::CannotCreateHalf`]. Use `build_pair` instead.
+//!
+//! Nacking a delivery puts it back at the end of the queue. Sending with a
+//! delay spawns a task that waits and then sends, so it needs a tokio runtime
+//! running, and a message still waiting out its delay when the process ends is
+//! lost.
+//!
+//! # Unsupported Operations
+//!
+//! `Delivery::set_ack_deadline` and `QueueProducer::redrive_dlq` both return
+//! [`QueueError::Unsupported`].
+//!
+//! # Example
+//!
+//! ```
+//! # async {
+//! use omniqueue::backends::InMemoryBackend;
+//!
+//! let (p, mut c) = InMemoryBackend::builder().build_pair().await?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
+
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
