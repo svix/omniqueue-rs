@@ -27,6 +27,38 @@
 //! set for tasks that should be processed now, and the currently processing
 //! queue for tasks that have timed out and should be put back on the main
 //! queue.
+//!
+//! # Configuration
+//!
+//! Parts of [`RedisConfig`] only apply to one of the two implementations.
+//! [`consumer_group`][RedisConfig::consumer_group],
+//! [`consumer_name`][RedisConfig::consumer_name] and
+//! [`payload_key`][RedisConfig::payload_key] are read by the streams
+//! implementation and ignored by the fallback one. The processing queue, set
+//! with [`processing_queue_key`][RedisBackendBuilder::processing_queue_key],
+//! only exists in the fallback implementation.
+//!
+//! The server must also not be able to evict queue keys, or messages are
+//! silently lost. Omniqueue checks `maxmemory-policy` on startup and logs a
+//! warning if it is not `noeviction` or one of the `volatile-*` policies.
+//!
+//! # Acknowledgements
+//!
+//! Acking a delivery removes it from the queue for good.
+//!
+//! Nacking one does not put it back right away. The message stays where it is,
+//! and the background worker hands it out again once
+//! [`ack_deadline_ms`][RedisConfig::ack_deadline_ms] has passed since it was
+//! last received. A delivery that is simply dropped is redelivered the same
+//! way, so a worker that dies mid-message does not take the message with it.
+//!
+//! With a [`DeadLetterQueueConfig`], a message received
+//! [`max_receives`][DeadLetterQueueConfig::max_receives] times is moved to the
+//! dead-letter queue instead of being handed out again. This is the only
+//! backend where `QueueProducer::redrive_dlq` does anything: it moves every
+//! message in the dead-letter queue back onto the main one. Without that
+//! config, it returns [`QueueError::Unsupported`], as does
+//! `Delivery::set_ack_deadline` in both implementations.
 
 // This lint warns on `let _: () = ...` which is used throughout this file for Redis commands which
 // have generic return types. This is cleaner than the turbofish operator in my opinion.
@@ -262,34 +294,89 @@ async fn check_eviction_policy<R: RedisConnection>(
 }
 
 pub struct RedisConfig {
+    /// The connection string of the redis server, for example
+    /// `redis://localhost:6379`. When connecting through sentinel, this is the
+    /// address of the sentinel instead.
     pub dsn: String,
+
+    /// The largest number of connections to keep in the pool.
     pub max_connections: u16,
+
+    /// Currently unused. Nacking never reinserts a message directly, whatever
+    /// this is set to. See the [module docs][self] for what a nack does
+    /// instead.
     pub reinsert_on_nack: bool,
+
+    /// The key of the main queue: the stream, or the list if you turn streams
+    /// off.
     pub queue_key: String,
+
+    /// The key of the sorted set that holds messages waiting out a delay.
+    ///
+    /// Delayed sending needs this. Left empty, the worker that moves due
+    /// messages onto the main queue is never started, so a delayed send is
+    /// accepted but never delivered. Omniqueue logs a warning when that
+    /// happens.
     pub delayed_queue_key: String,
+
+    /// The key of the lock that keeps two workers from moving the same delayed
+    /// messages onto the main queue at once. It expires by itself, so a worker
+    /// that dies while holding it does not stall the others.
     pub delayed_lock_key: String,
+
+    /// The consumer group that consumers read the stream as. Streams only.
     pub consumer_group: String,
+
+    /// The name identifying this consumer within the consumer group. Streams
+    /// only.
     pub consumer_name: String,
+
+    /// The field a payload is stored under inside a stream entry. Streams only.
     pub payload_key: String,
+
+    /// How long a message may go unacknowledged, in milliseconds, before it is
+    /// handed out again. Set it comfortably longer than a message takes to
+    /// process.
     pub ack_deadline_ms: i64,
+
+    /// Where to put messages that have been received too many times. `None`
+    /// keeps redelivering them forever.
     pub dlq_config: Option<DeadLetterQueueConfig>,
+
+    /// Settings for connecting through redis sentinel.
+    ///
+    /// Only read when the backend is built with
+    /// `RedisBackend::sentinel_builder`, behind the `redis_sentinel` feature,
+    /// which fails without it.
     pub sentinel_config: Option<SentinelConfig>,
 }
 
 #[derive(Clone)]
 pub struct SentinelConfig {
+    /// The name the sentinel knows the redis server by.
     pub service_name: String,
+
+    /// Whether to connect to the redis server behind the sentinel over TLS.
     pub redis_tls_mode_secure: bool,
+
+    /// The database number to select on the redis server. Defaults to 0.
     pub redis_db: Option<i64>,
+
+    /// The username to authenticate to the redis server with, if it needs one.
     pub redis_username: Option<String>,
+
+    /// The password to authenticate to the redis server with, if it needs one.
     pub redis_password: Option<String>,
+
+    /// Whether to talk to the redis server using RESP3 rather than the default
+    /// protocol version.
     pub redis_use_resp3: bool,
 }
 
 #[derive(Clone)]
 pub struct DeadLetterQueueConfig {
-    // The name of the deadletter queue, which is a simple
-    // list data type.
+    /// The name of the deadletter queue, which is a simple
+    /// list data type.
     pub queue_key: String,
     /// The number of times a message may be received before
     /// being sent to the deadletter queue.

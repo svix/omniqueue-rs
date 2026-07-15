@@ -103,11 +103,18 @@ impl Delivery {
         self.payload.take()
     }
 
-    /// This method
+    /// Borrows the contained bytes, doing no further processing.
+    ///
+    /// Returns `None` if the payload was already taken out with
+    /// [`take_payload`][Self::take_payload].
     pub fn borrow_payload(&self) -> Option<&[u8]> {
         self.payload.as_deref()
     }
 
+    /// Deserializes the contained bytes from JSON.
+    ///
+    /// Returns `Ok(None)` if the payload was already taken out with
+    /// [`take_payload`][Self::take_payload].
     pub fn payload_serde_json<T: DeserializeOwned>(&self) -> Result<Option<T>> {
         let Some(bytes) = self.payload.as_ref() else {
             return Ok(None);
