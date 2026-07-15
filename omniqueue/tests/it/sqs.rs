@@ -149,15 +149,15 @@ async fn test_send_recv_all_partial() {
     let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
 
     let now = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 1);
     let d = xs.remove(0);
     assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
     d.ack().await.unwrap();
-    assert!(now.elapsed() <= deadline);
+    assert!(now.elapsed() <= timeout);
 }
 
 /// Consumer should yield items immediately if there's a full batch ready on the
@@ -170,10 +170,10 @@ async fn test_send_recv_all_full() {
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
 
     let now = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 2);
     let d1 = xs.remove(0);
     assert_eq!(
@@ -190,7 +190,7 @@ async fn test_send_recv_all_full() {
     d2.ack().await.unwrap();
     // N.b. it's still possible this could turn up false if the test runs too
     // slow.
-    assert!(now.elapsed() < deadline);
+    assert!(now.elapsed() < timeout);
 }
 
 /// Consumer will return the full batch immediately, but also return immediately
@@ -206,9 +206,9 @@ async fn test_send_recv_all_full_then_partial() {
     p.send_serde_json(&payload2).await.unwrap();
     p.send_serde_json(&payload3).await.unwrap();
 
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
     let now1 = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 2);
     let d1 = xs.remove(0);
     assert_eq!(
@@ -223,11 +223,11 @@ async fn test_send_recv_all_full_then_partial() {
         payload2
     );
     d2.ack().await.unwrap();
-    assert!(now1.elapsed() < deadline);
+    assert!(now1.elapsed() < timeout);
 
     // 2nd call
     let now2 = Instant::now();
-    let mut ys = c.receive_all(2, deadline).await.unwrap();
+    let mut ys = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(ys.len(), 1);
     let d3 = ys.remove(0);
     assert_eq!(
@@ -235,7 +235,7 @@ async fn test_send_recv_all_full_then_partial() {
         payload3
     );
     d3.ack().await.unwrap();
-    assert!(now2.elapsed() < deadline);
+    assert!(now2.elapsed() < timeout);
 }
 
 /// Consumer will NOT wait indefinitely for at least one item.
@@ -243,15 +243,15 @@ async fn test_send_recv_all_full_then_partial() {
 async fn test_send_recv_all_late_arriving_items() {
     let (_p, c) = make_test_queue(None).await.build_pair().await.unwrap();
 
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
     let now = Instant::now();
-    let xs = c.receive_all(2, deadline).await.unwrap();
+    let xs = c.receive_all(2, timeout).await.unwrap();
     let elapsed = now.elapsed();
 
     assert_eq!(xs.len(), 0);
-    // Elapsed should be around the deadline, ballpark
-    assert!(elapsed >= deadline);
-    assert!(elapsed <= deadline + Duration::from_millis(200));
+    // Elapsed should be around the timeout, ballpark
+    assert!(elapsed >= timeout);
+    assert!(elapsed <= timeout + Duration::from_millis(200));
 }
 
 #[tokio::test]
