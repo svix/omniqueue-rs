@@ -56,14 +56,15 @@
 
 use std::time::{Duration, Instant};
 
+use assert_matches::assert_matches;
 use gcloud_googleapis::pubsub::v1::DeadLetterPolicy;
 use gcloud_pubsub::{
     client::{Client, ClientConfig},
     subscription::SubscriptionConfig,
 };
 use omniqueue::{
-    backends::{GcpPubSubBackend, GcpPubSubConfig},
-    QueueBuilder,
+    backends::{GcpPubSubBackend, GcpPubSubConfig, GcpPubSubConsumer},
+    Delivery, QueueBuilder, QueueError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -87,13 +88,13 @@ fn random_chars() -> impl Iterator<Item = char> {
     std::iter::repeat_with(fastrand::alphanumeric)
 }
 
-/// Returns a [`QueueBuilder`] configured to connect to the GCP emulator
-/// instance spawned by the file `testing-docker-compose.yaml` in the root of
-/// the repository.
+/// Creates a temporary topic/subscription on the GCP emulator instance spawned
+/// by the file `testing-docker-compose.yaml` in the root of the repository, and
+/// returns the [`GcpPubSubConfig`] pointing at it.
 ///
-/// Additionally this will make a temporary topic/subscription on that instance
-/// for the duration of the test such as to ensure there is no stealing.
-async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
+/// The topic and subscription are unique to the calling test such as to ensure
+/// there is no stealing.
+async fn make_test_queue_config() -> GcpPubSubConfig {
     let client = get_client().await;
 
     let topic_name: String = "topic-".chars().chain(random_chars().take(8)).collect();
@@ -128,13 +129,36 @@ async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
         .await
         .unwrap();
 
-    let config = GcpPubSubConfig {
+    GcpPubSubConfig {
         topic_id: topic.id(),
         subscription_id: subscription.id(),
         credentials_file: None,
-    };
+    }
+}
 
-    GcpPubSubBackend::builder(config)
+/// Returns a [`QueueBuilder`] pointed at a fresh temporary topic/subscription.
+///
+/// See [`make_test_queue_config`].
+async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
+    GcpPubSubBackend::builder(make_test_queue_config().await)
+}
+
+/// Receives `count` deliveries, pulling in batches.
+///
+/// Gives up early if a pull comes back empty, so that a test asserting on the
+/// count fails rather than hangs.
+async fn receive_n(c: &mut GcpPubSubConsumer, count: usize) -> Vec<Delivery> {
+    let timeout = Duration::from_secs(1);
+    let mut deliveries = Vec::with_capacity(count);
+    while deliveries.len() < count {
+        let batch = c.receive_all(count, timeout).await.unwrap();
+        if batch.is_empty() {
+            break;
+        }
+        deliveries.extend(batch);
+    }
+
+    deliveries
 }
 
 #[tokio::test]
@@ -187,15 +211,15 @@ async fn test_send_recv_all_partial() {
     let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
     p.send_serde_json(&payload).await.unwrap();
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
 
     let now = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 1);
     let d = xs.remove(0);
     assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
     d.ack().await.unwrap();
-    assert!(now.elapsed() <= deadline);
+    assert!(now.elapsed() <= timeout);
 }
 
 /// Consumer should yield items immediately if there's a full batch ready on the
@@ -208,10 +232,10 @@ async fn test_send_recv_all_full() {
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
 
     let now = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 2);
     let d1 = xs.remove(0);
     assert_eq!(
@@ -228,7 +252,7 @@ async fn test_send_recv_all_full() {
     d2.ack().await.unwrap();
     // N.b. it's still possible this could turn up false if the test runs too
     // slow.
-    assert!(now.elapsed() < deadline);
+    assert!(now.elapsed() < timeout);
 }
 
 /// Consumer will return the full batch immediately, but also return immediately
@@ -244,9 +268,9 @@ async fn test_send_recv_all_full_then_partial() {
     p.send_serde_json(&payload2).await.unwrap();
     p.send_serde_json(&payload3).await.unwrap();
 
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
     let now1 = Instant::now();
-    let mut xs = c.receive_all(2, deadline).await.unwrap();
+    let mut xs = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(xs.len(), 2);
     let d1 = xs.remove(0);
     assert_eq!(
@@ -261,11 +285,11 @@ async fn test_send_recv_all_full_then_partial() {
         payload2
     );
     d2.ack().await.unwrap();
-    assert!(now1.elapsed() < deadline);
+    assert!(now1.elapsed() < timeout);
 
     // 2nd call
     let now2 = Instant::now();
-    let mut ys = c.receive_all(2, deadline).await.unwrap();
+    let mut ys = c.receive_all(2, timeout).await.unwrap();
     assert_eq!(ys.len(), 1);
     let d3 = ys.remove(0);
     assert_eq!(
@@ -273,7 +297,7 @@ async fn test_send_recv_all_full_then_partial() {
         payload3
     );
     d3.ack().await.unwrap();
-    assert!(now2.elapsed() <= deadline);
+    assert!(now2.elapsed() <= timeout);
 }
 
 /// Consumer will NOT wait indefinitely for at least one item.
@@ -281,13 +305,161 @@ async fn test_send_recv_all_full_then_partial() {
 async fn test_send_recv_all_late_arriving_items() {
     let (_p, mut c) = make_test_queue().await.build_pair().await.unwrap();
 
-    let deadline = Duration::from_secs(1);
+    let timeout = Duration::from_secs(1);
     let now = Instant::now();
-    let xs = c.receive_all(2, deadline).await.unwrap();
+    let xs = c.receive_all(2, timeout).await.unwrap();
     let elapsed = now.elapsed();
 
     assert_eq!(xs.len(), 0);
-    // Elapsed should be around the deadline, ballpark
-    assert!(elapsed >= deadline);
-    assert!(elapsed <= deadline + Duration::from_millis(200));
+    // Elapsed should be around the timeout, ballpark
+    assert!(elapsed >= timeout);
+    assert!(elapsed <= timeout + Duration::from_millis(200));
+}
+
+/// Nacking a message returns it to the subscription, so it is redelivered.
+#[tokio::test]
+async fn test_nack_redelivers() {
+    let payload = ExType { a: 1 };
+    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    p.send_serde_json(&payload).await.unwrap();
+
+    // `receive()` blocks with no timeout, so pull with one instead.
+    let mut xs = c.receive_all(1, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(xs.len(), 1);
+    let d = xs.remove(0);
+    d.nack().await.unwrap();
+
+    // The nack puts it back, so it comes around again.
+    let mut ys = c.receive_all(1, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(ys.len(), 1);
+    let d = ys.remove(0);
+    assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
+    d.ack().await.unwrap();
+}
+
+/// `send_raw_batch` is overridden to publish in bulk. Every message still
+/// arrives.
+#[tokio::test]
+async fn test_send_raw_batch() {
+    use omniqueue::QueueProducer as _;
+    const COUNT: usize = 25;
+    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+
+    let payloads: Vec<Vec<u8>> = (0..COUNT)
+        .map(|i| format!("payload-{i}").into_bytes())
+        .collect();
+    p.send_raw_batch(payloads.clone()).await.unwrap();
+
+    let deliveries = receive_n(&mut c, COUNT).await;
+    assert_eq!(deliveries.len(), COUNT);
+    let mut received: Vec<Vec<u8>> = deliveries
+        .iter()
+        .map(|d| d.borrow_payload().unwrap().to_owned())
+        .collect();
+    received.sort();
+    let mut expected = payloads;
+    expected.sort();
+    assert_eq!(received, expected);
+}
+
+/// The same bulk publishing applies to `send_serde_json_batch`.
+#[tokio::test]
+async fn test_send_serde_json_batch() {
+    use omniqueue::QueueProducer as _;
+    const COUNT: usize = 25;
+    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+
+    let payloads: Vec<ExType> = (0..COUNT).map(|i| ExType { a: i as u8 }).collect();
+    p.send_serde_json_batch(payloads).await.unwrap();
+
+    let deliveries = receive_n(&mut c, COUNT).await;
+    assert_eq!(deliveries.len(), COUNT);
+    let mut received: Vec<u8> = deliveries
+        .iter()
+        .map(|d| d.payload_serde_json::<ExType>().unwrap().unwrap().a)
+        .collect();
+    received.sort_unstable();
+    let expected: Vec<u8> = (0..COUNT as u8).collect();
+    assert_eq!(received, expected);
+}
+
+/// `send_bytes_batch` funnels into the overridden `send_raw_batch`.
+#[tokio::test]
+async fn test_send_bytes_batch() {
+    use omniqueue::QueueProducer as _;
+    const COUNT: usize = 25;
+    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+
+    let payloads: Vec<Vec<u8>> = (0..COUNT)
+        .map(|i| format!("payload-{i}").into_bytes())
+        .collect();
+    p.send_bytes_batch(payloads.clone()).await.unwrap();
+
+    let deliveries = receive_n(&mut c, COUNT).await;
+    assert_eq!(deliveries.len(), COUNT);
+    let mut received: Vec<Vec<u8>> = deliveries
+        .iter()
+        .map(|d| d.borrow_payload().unwrap().to_owned())
+        .collect();
+    received.sort();
+    let mut expected = payloads;
+    expected.sort();
+    assert_eq!(received, expected);
+}
+
+#[tokio::test]
+async fn test_redrive_dlq_unsupported() {
+    let (p, _c) = make_test_queue().await.build_pair().await.unwrap();
+    let err = p.redrive_dlq().await.unwrap_err();
+    assert_matches!(err, QueueError::Unsupported(_));
+}
+
+/// The producer and consumer can be built independently from the same config.
+#[tokio::test]
+async fn test_producing_and_consuming_halves_can_be_built_separately() {
+    let payload = ExType { a: 4 };
+    let config = make_test_queue_config().await;
+
+    let p = GcpPubSubBackend::builder(config.clone())
+        .build_producer()
+        .await
+        .unwrap();
+    let mut c = GcpPubSubBackend::builder(config)
+        .build_consumer()
+        .await
+        .unwrap();
+
+    p.send_serde_json(&payload).await.unwrap();
+
+    let d = c.receive().await.unwrap();
+    assert_eq!(d.payload_serde_json::<ExType>().unwrap().unwrap(), payload);
+    d.ack().await.unwrap();
+}
+
+/// Unlike SQS, GCP Pub/Sub places no cap on how many messages a single pull may
+/// request.
+#[tokio::test]
+async fn test_max_messages_is_unbounded() {
+    use omniqueue::QueueConsumer as _;
+    let (_p, c) = make_test_queue().await.build_pair().await.unwrap();
+    assert_eq!(c.max_messages(), None);
+}
+
+/// A deadline too large for Pub/Sub's `i32` ack-deadline seconds is rejected
+/// without a round trip.
+#[cfg(feature = "beta")]
+#[tokio::test]
+async fn test_set_ack_deadline_rejects_too_large_duration() {
+    let payload = ExType { a: 5 };
+    let (p, mut c) = make_test_queue().await.build_pair().await.unwrap();
+    p.send_serde_json(&payload).await.unwrap();
+
+    let mut xs = c.receive_all(1, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(xs.len(), 1);
+    let mut d = xs.remove(0);
+    let err = d
+        .set_ack_deadline(Duration::from_secs(u32::MAX.into()))
+        .await
+        .unwrap_err();
+    assert_matches!(err, QueueError::Generic(_));
 }
