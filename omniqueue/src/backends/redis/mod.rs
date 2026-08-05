@@ -40,7 +40,6 @@ use std::{
 };
 
 use bb8::ManageConnection;
-pub use bb8_redis::RedisConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo, TlsMode};
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
@@ -62,12 +61,14 @@ mod cluster;
 mod fallback;
 #[cfg(feature = "redis_sentinel")]
 mod sentinel;
+mod standalone;
 mod streams;
 
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 pub use sentinel::RedisSentinelConnectionManager;
+pub use standalone::RedisConnectionManager;
 
 pub trait RedisConnection:
     ManageConnection<

@@ -13,7 +13,6 @@ edition = "2021"
 aws-config = { version = "1.1.5", default-features = false, features = ["behavior-version-latest"], optional = true }
 aws-sdk-sqs = { version = "1.13.0", optional = true, default-features = false, features = ["default-https-client", "rt-tokio"] }
 bb8 = { version = "0.9.0", optional = true }
-bb8-redis = { version = "0.26.0", optional = true }
 bytesize = "2.0.1"
 futures-util = { version = "0.3.28", default-features = false, features = ["async-await", "std"], optional = true }
 gcloud-googleapis = { version = "1.2.0", optional = true }
@@ -44,7 +43,7 @@ gcp_pubsub = ["dep:futures-util", "dep:gcloud-googleapis", "dep:gcloud-pubsub"]
 rabbitmq = ["dep:futures-util", "dep:lapin"]
 # Generate message IDs for queue items. Likely not needed outside of Svix.
 rabbitmq-with-message-ids = ["rabbitmq", "dep:svix-ksuid"]
-redis = ["dep:bb8", "dep:bb8-redis", "dep:redis", "dep:svix-ksuid"]
+redis = ["dep:bb8", "dep:redis", "dep:svix-ksuid"]
 redis_cluster = ["redis", "redis/cluster-async"]
 redis_sentinel = ["redis", "redis/sentinel"]
 sqs = ["dep:aws-config", "dep:aws-sdk-sqs", "dep:futures-util"]

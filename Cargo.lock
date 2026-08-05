@@ -692,16 +692,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bb8-redis"
-version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc1063effc7f6cf848bcbcc6e31b5962be75215835587d3109607c643d616f66"
-dependencies = [
- "bb8",
- "redis",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2189,7 +2179,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-sqs",
  "bb8",
- "bb8-redis",
  "bytesize",
  "fastrand",
  "futures-util",

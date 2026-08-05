@@ -1,11 +1,13 @@
 use std::time::{Duration, Instant};
 
-use bb8_redis::RedisConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 use omniqueue::backends::redis::RedisSentinelConnectionManager;
 use omniqueue::{
     backends::{
-        redis::{DeadLetterQueueConfig, RedisBackendBuilder, RedisConnection, SentinelConfig},
+        redis::{
+            DeadLetterQueueConfig, RedisBackendBuilder, RedisConnection, RedisConnectionManager,
+            SentinelConfig,
+        },
         RedisBackend, RedisConfig,
     },
     Delivery,

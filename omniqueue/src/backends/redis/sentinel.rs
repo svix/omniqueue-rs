@@ -1,6 +1,6 @@
 use redis::{
     sentinel::{SentinelClient, SentinelNodeConnectionInfo, SentinelServerType},
-    ErrorKind, IntoConnectionInfo, RedisError, ServerErrorKind,
+    AsyncConnectionConfig, ErrorKind, IntoConnectionInfo, RedisError, ServerErrorKind,
 };
 use tokio::sync::Mutex;
 
@@ -37,7 +37,14 @@ impl bb8::ManageConnection for RedisSentinelConnectionManager {
     type Error = RedisError;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        self.client.0.lock().await.get_async_connection().await
+        self.client
+            .0
+            .lock()
+            .await
+            .get_async_connection_with_config(
+                &AsyncConnectionConfig::new().set_response_timeout(None),
+            )
+            .await
     }
 
     async fn is_valid(&self, conn: &mut Self::Connection) -> Result<(), Self::Error> {
