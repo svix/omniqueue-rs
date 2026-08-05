@@ -9,14 +9,26 @@
 //!
 //! ## Cargo Features
 //!
-//! Each backend is enabled with its associated cargo feature. All backends are
-//! enabled by default. As of present it supports:
+//! Each backend is enabled with its associated cargo feature. These are on by
+//! default:
 //!
-//! * In-memory queue
-//! * Google Cloud Pub/Sub
-//! * RabbitMQ
-//! * Redis
-//! * Amazon SQS
+//! * `in_memory`, an in-memory queue
+//! * `gcp_pubsub`, Google Cloud Pub/Sub
+//! * `rabbitmq`, RabbitMQ
+//! * `redis`, Redis
+//! * `redis_cluster`, clustered Redis
+//! * `sqs`, Amazon SQS
+//!
+//! These are off by default:
+//!
+//! * `redis_sentinel`, Redis behind sentinel
+//! * `rabbitmq-with-message-ids`, has the RabbitMQ producer set a message ID on
+//!   every message. Likely not needed outside of Svix.
+//! * `beta`, enables `Delivery::set_ack_deadline`, which not every backend
+//!   supports. Not stable yet.
+//!
+//! Each backend's own module under [`backends`] covers its configuration and
+//! which operations it supports.
 //!
 //! ## How to Use Omniqueue
 //!

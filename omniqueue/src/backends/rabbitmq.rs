@@ -1,3 +1,71 @@
+//! RabbitMQ queue implementation.
+//!
+//! # The Implementation
+//!
+//! Producers publish to an exchange with a routing key, and consumers read from
+//! a queue. Omniqueue declares no exchanges, queues or bindings, so they have
+//! to exist before a producer or consumer is built.
+//!
+//! Nacking uses `basic.nack`, and
+//! [`requeue_on_nack`][RabbitMqConfig::requeue_on_nack] decides whether the
+//! message goes back on the queue or is discarded.
+//!
+//! # Scheduled Messages
+//!
+//! Sending with a delay only works if the broker has the
+//! [delayed message exchange plugin][plugin] enabled and
+//! [`publish_exchange`][RabbitMqConfig::publish_exchange] names an exchange
+//! declared with the type `x-delayed-message`.
+//!
+//! The delay is passed as an `x-delay` header. A broker without the plugin
+//! ignores that header and delivers the message immediately instead of failing,
+//! so set the exchange up before relying on delays.
+//!
+//! [plugin]: https://github.com/rabbitmq/rabbitmq-delayed-message-exchange
+//!
+//! # Unsupported Operations
+//!
+//! `Delivery::set_ack_deadline` and `QueueProducer::redrive_dlq` both return
+//! [`QueueError::Unsupported`]. To dead-letter messages, configure a
+//! dead-letter exchange on the queue and set `requeue_on_nack` to `false`.
+//!
+//! # Example
+//!
+//! ```no_run
+//! # async {
+//! use omniqueue::backends::{
+//!     rabbitmq::{
+//!         BasicConsumeOptions, BasicProperties, BasicPublishOptions, ConnectionProperties,
+//!         FieldTable,
+//!     },
+//!     RabbitMqBackend, RabbitMqConfig,
+//! };
+//!
+//! let cfg = RabbitMqConfig {
+//!     uri: "amqp://guest:guest@localhost:5672/%2f".to_owned(),
+//!     connection_properties: ConnectionProperties::default(),
+//!
+//!     // The empty exchange is the default exchange, which routes to the queue
+//!     // named by the routing key.
+//!     publish_exchange: String::new(),
+//!     publish_routing_key: "my-queue".to_owned(),
+//!     publish_options: BasicPublishOptions::default(),
+//!     publish_properties: BasicProperties::default(),
+//!
+//!     consume_queue: "my-queue".to_owned(),
+//!     consumer_tag: "my-consumer".to_owned(),
+//!     consume_options: BasicConsumeOptions::default(),
+//!     consume_arguments: FieldTable::default(),
+//!
+//!     consume_prefetch_count: Some(32),
+//!     requeue_on_nack: true,
+//! };
+//!
+//! let (p, mut c) = RabbitMqBackend::builder(cfg).build_pair().await?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
+
 use std::time::{Duration, Instant};
 
 use futures_util::{FutureExt, StreamExt};
@@ -21,20 +89,68 @@ use crate::{
 
 #[derive(Clone)]
 pub struct RabbitMqConfig {
+    /// The AMQP URI of the broker, for example
+    /// `amqp://guest:guest@localhost:5672/%2f`, where `%2f` is the URL-encoded
+    /// name of the default virtual host, `/`.
     pub uri: String,
+
+    /// Connection-level options handed to [`lapin`], such as which executor to
+    /// run the connection on. [`ConnectionProperties::default()`] is a
+    /// reasonable starting point.
     pub connection_properties: ConnectionProperties,
 
+    /// The exchange to publish to.
+    ///
+    /// The empty string is the default exchange, which routes to the queue
+    /// named by [`publish_routing_key`][Self::publish_routing_key]. Scheduled
+    /// sends need an exchange of type `x-delayed-message`. See the
+    /// [module docs][self].
     pub publish_exchange: String,
+
+    /// The routing key to publish with.
+    ///
+    /// How it is interpreted is up to the exchange. On the default exchange it
+    /// is the name of the destination queue.
     pub publish_routing_key: String,
+
+    /// Options for every `basic.publish`, such as whether an unroutable message
+    /// is returned rather than dropped.
     pub publish_options: BasicPublishOptions,
+
+    /// AMQP properties set on every published message, such as the content type
+    /// or the delivery mode. Scheduled sends add an `x-delay` header on top of
+    /// these.
     pub publish_properties: BasicProperties,
 
+    /// The name of the queue to consume from. It has to exist already.
     pub consume_queue: String,
+
+    /// The tag identifying this consumer to the broker. An empty string lets
+    /// the broker generate one.
     pub consumer_tag: String,
+
+    /// Options for `basic.consume`.
+    ///
+    /// Leave `no_ack` off (the default) to acknowledge deliveries yourself.
+    /// With `no_ack` on, the broker treats a message as delivered as soon as it
+    /// is sent, and acking or nacking it has no effect.
     pub consume_options: BasicConsumeOptions,
+
+    /// Extra arguments passed to `basic.consume`, for example to set a consumer
+    /// priority.
     pub consume_arguments: FieldTable,
 
+    /// How many unacknowledged messages the broker may have in flight to this
+    /// consumer, set via `basic.qos`.
+    ///
+    /// `None` means no limit, which lets the broker push a whole backlog at one
+    /// consumer, so it is usually worth setting.
     pub consume_prefetch_count: Option<u16>,
+
+    /// Whether nacking a delivery puts it back on the queue.
+    ///
+    /// If `false`, a nacked message is discarded, or dead-lettered if the queue
+    /// has a dead-letter exchange configured.
     pub requeue_on_nack: bool,
 }
 
