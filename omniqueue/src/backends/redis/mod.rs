@@ -292,7 +292,7 @@ pub struct RedisConfig {
 #[derive(Clone)]
 pub struct SentinelConfig {
     pub service_name: String,
-    /// Deprecated: use `redis_tls_mode` instead.
+    #[deprecated = "use `redis_tls_mode` instead"]
     pub redis_tls_mode_secure: bool,
     pub redis_tls_mode: Option<TlsMode>,
     pub redis_db: Option<i64>,
