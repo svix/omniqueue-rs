@@ -40,7 +40,6 @@ use std::{
 };
 
 use bb8::ManageConnection;
-pub use bb8_redis::RedisConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo, TlsMode};
 use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
@@ -62,12 +61,14 @@ mod cluster;
 mod fallback;
 #[cfg(feature = "redis_sentinel")]
 mod sentinel;
+mod standalone;
 mod streams;
 
 #[cfg(feature = "redis_cluster")]
 pub use cluster::RedisClusterConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 pub use sentinel::RedisSentinelConnectionManager;
+pub use standalone::RedisConnectionManager;
 
 pub trait RedisConnection:
     ManageConnection<
@@ -100,23 +101,33 @@ impl RedisConnection for RedisSentinelConnectionManager {
             .ok_or(QueueError::Unsupported("Missing sentinel configuration"))?;
 
         let tls_mode = cfg.redis_tls_mode_secure.then_some(TlsMode::Secure);
+
         let protocol = if cfg.redis_use_resp3 {
             ProtocolVersion::RESP3
         } else {
             ProtocolVersion::default()
         };
+
+        let mut conn_info = RedisConnectionInfo::default()
+            .set_db(cfg.redis_db.unwrap_or(0))
+            .set_protocol(protocol);
+        if let Some(username) = &cfg.redis_username {
+            conn_info = conn_info.set_username(username);
+        }
+        if let Some(password) = &cfg.redis_password {
+            conn_info = conn_info.set_password(password);
+        }
+
+        let mut node_connection_info =
+            SentinelNodeConnectionInfo::default().set_redis_connection_info(conn_info);
+        if let Some(tls_mode) = tls_mode {
+            node_connection_info = node_connection_info.set_tls_mode(tls_mode);
+        }
+
         RedisSentinelConnectionManager::new(
             vec![config.dsn.as_str()],
             cfg.service_name.clone(),
-            Some(SentinelNodeConnectionInfo {
-                tls_mode,
-                redis_connection_info: Some(RedisConnectionInfo {
-                    db: cfg.redis_db.unwrap_or(0),
-                    username: cfg.redis_username.clone(),
-                    password: cfg.redis_password.clone(),
-                    protocol,
-                }),
-            }),
+            Some(node_connection_info),
         )
         .map_err(QueueError::generic)
     }
