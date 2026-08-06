@@ -41,8 +41,8 @@ use std::{
 
 use bb8::ManageConnection;
 #[cfg(feature = "redis_sentinel")]
-use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo, TlsMode};
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions};
+use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo};
+use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, TlsMode};
 use serde::Serialize;
 use svix_ksuid::{KsuidLike, KsuidMs};
 use thiserror::Error;
@@ -100,7 +100,9 @@ impl RedisConnection for RedisSentinelConnectionManager {
             .clone()
             .ok_or(QueueError::Unsupported("Missing sentinel configuration"))?;
 
-        let tls_mode = cfg.redis_tls_mode_secure.then_some(TlsMode::Secure);
+        let tls_mode = cfg
+            .redis_tls_mode
+            .or(cfg.redis_tls_mode_secure.then_some(TlsMode::Secure));
 
         let protocol = if cfg.redis_use_resp3 {
             ProtocolVersion::RESP3
@@ -290,7 +292,9 @@ pub struct RedisConfig {
 #[derive(Clone)]
 pub struct SentinelConfig {
     pub service_name: String,
+    /// Deprecated: use `redis_tls_mode` instead.
     pub redis_tls_mode_secure: bool,
+    pub redis_tls_mode: Option<TlsMode>,
     pub redis_db: Option<i64>,
     pub redis_username: Option<String>,
     pub redis_password: Option<String>,

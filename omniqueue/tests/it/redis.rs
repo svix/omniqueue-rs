@@ -85,6 +85,7 @@ async fn make_test_queue<R: RedisConnection>(
         sentinel_config: Some(SentinelConfig {
             service_name: "master0".to_owned(),
             redis_tls_mode_secure: false,
+            redis_tls_mode: None,
             redis_db: None,
             redis_username: None,
             redis_password: None,
