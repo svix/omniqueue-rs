@@ -1,3 +1,54 @@
+//! Google Cloud Pub/Sub queue implementation.
+//!
+//! # The Implementation
+//!
+//! Pub/Sub splits the two halves of a queue. Producers publish to a topic, and
+//! consumers read from a subscription attached to that topic, so both are named
+//! separately in [`GcpPubSubConfig`].
+//!
+//! Omniqueue creates neither. Both have to exist already, though neither is
+//! checked when the queue is built. A producer whose topic is missing is built
+//! with a warning and only fails once it tries to publish, which leaves room
+//! for the topic to turn up in the meantime. A consumer fails when it tries to
+//! receive from a subscription that is not there.
+//!
+//! Nacking a delivery asks for it to be redelivered right away, rather than
+//! waiting out the ack deadline.
+//!
+//! # Authentication
+//!
+//! Credentials come from the file named by
+//! [`credentials_file`][GcpPubSubConfig::credentials_file], or, when that is
+//! `None`, from the environment: `GOOGLE_APPLICATION_CREDENTIALS` holding a
+//! path to a credentials file, or `GOOGLE_APPLICATION_CREDENTIALS_JSON` holding
+//! the contents of one, so no file is needed on disk.
+//!
+//! # Unsupported Operations
+//!
+//! This is the one backend that cannot send with a delay, so it does not
+//! implement [`ScheduledQueueProducer`][crate::ScheduledQueueProducer].
+//!
+//! `QueueProducer::redrive_dlq` returns [`QueueError::Unsupported`]. Pub/Sub
+//! can dead-letter messages, but that is configured on the subscription, not
+//! through omniqueue.
+//!
+//! # Example
+//!
+//! ```no_run
+//! # async {
+//! use omniqueue::backends::{GcpPubSubBackend, GcpPubSubConfig};
+//!
+//! let cfg = GcpPubSubConfig {
+//!     topic_id: "my-topic".to_owned(),
+//!     subscription_id: "my-subscription".to_owned(),
+//!     credentials_file: None,
+//! };
+//!
+//! let (p, mut c) = GcpPubSubBackend::builder(cfg).build_pair().await?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
+
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -37,8 +88,22 @@ type Payload = Vec<u8>;
 // FIXME: topic/subscription are each for read/write. Split config up?
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GcpPubSubConfig {
+    /// The ID of the topic to publish to, used by the producer.
+    ///
+    /// This is the short ID, not the fully qualified
+    /// `projects/{project}/topics/{topic}` name.
     pub topic_id: String,
+
+    /// The ID of the subscription to consume from, used by the consumer.
+    ///
+    /// It has to be attached to the topic you expect to read from. Nothing
+    /// checks that it is the same topic named above.
     pub subscription_id: String,
+
+    /// Path to a Google Cloud credentials file.
+    ///
+    /// When `None`, credentials are read from the environment instead. See the
+    /// [module docs][self] for which variables are used.
     pub credentials_file: Option<PathBuf>,
 }
 

@@ -1,3 +1,59 @@
+//! Amazon SQS queue implementation.
+//!
+//! # The Implementation
+//!
+//! A queue is identified by its URL, which is what [`SqsConfig::queue_dsn`]
+//! holds. It has to exist already. Unlike the other backends, the payload type
+//! is `String` rather than bytes, because an SQS message body is text.
+//!
+//! Acking a delivery deletes the message. Nacking one does nothing at all, so
+//! the message stays invisible until its visibility timeout runs out and SQS
+//! hands it out again. To get a nacked message back sooner, shorten that
+//! timeout with `Delivery::set_ack_deadline`, which needs the `beta` feature.
+//!
+//! # Credentials
+//!
+//! By default the AWS configuration is read from the process environment, via
+//! [`aws_config::load_from_env`]. Two builder methods change that:
+//!
+//! - `sqs_config` supplies an [`aws_sdk_sqs::Config`] directly, and takes
+//!   precedence over everything else.
+//! - `override_endpoint` points the client at the queue DSN instead of the real
+//!   AWS endpoint, which is how you talk to a local stand-in such as ElasticMQ.
+//!
+//! # Limits
+//!
+//! Sends over `max_payload_size` fail with [`QueueError::PayloadTooLarge`]
+//! before anything reaches SQS. The default is the largest size SQS accepts.
+//!
+//! SQS hands out at most 10 messages per receive, which is what `max_messages`
+//! reports, and batch sends are split into chunks of 10 for the same reason.
+//!
+//! A scheduled send passes the delay as whole seconds, so anything under a
+//! second is rounded down to no delay. SQS caps the delay at 15 minutes.
+//!
+//! # Unsupported Operations
+//!
+//! `QueueProducer::redrive_dlq` returns [`QueueError::Unsupported`]. SQS has
+//! dead-letter queues, but they are configured on the queue with a redrive
+//! policy, not through omniqueue.
+//!
+//! # Example
+//!
+//! ```no_run
+//! # async {
+//! use omniqueue::backends::{SqsBackend, SqsConfig};
+//!
+//! let cfg = SqsConfig {
+//!     queue_dsn: "https://sqs.us-east-1.amazonaws.com/123456789012/my-queue".to_owned(),
+//!     override_endpoint: false,
+//! };
+//!
+//! let (p, mut c) = SqsBackend::builder(cfg).build_pair().await?;
+//! # anyhow::Ok(())
+//! # };
+//! ```
+
 use std::{
     fmt::{self, Write},
     future::Future,
@@ -27,10 +83,18 @@ const MAX_BATCH_SIZE: usize = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
-    /// The queue's [DSN](https://aws.amazon.com/route53/what-is-dns/).
+    /// The [URL of the queue][queue-url], which is what identifies it to SQS.
+    ///
+    /// For example
+    /// `https://sqs.us-east-1.amazonaws.com/123456789012/my-queue`.
+    ///
+    /// [queue-url]: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-queue-message-identifiers.html
     pub queue_dsn: String,
 
     /// Whether to override the AWS endpoint URL with the queue DSN.
+    ///
+    /// Turn this on to point the client at something other than real AWS, such
+    /// as ElasticMQ or another local stand-in.
     pub override_endpoint: bool,
 }
 
