@@ -142,8 +142,8 @@ pub enum QueueError {
 }
 
 impl QueueError {
-    pub fn generic<E: std::error::Error + Send + Sync + 'static>(e: E) -> Self {
-        Self::Generic(Box::new(e))
+    pub fn generic(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> Self {
+        Self::Generic(e.into())
     }
 }
 
