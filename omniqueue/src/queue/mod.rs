@@ -14,7 +14,7 @@ pub(crate) use self::producer::ErasedQueueProducer;
 pub use self::{
     acker::Acker,
     consumer::{BaseDynConsumer, DynConsumer, QueueConsumer},
-    producer::{BaseDynProducer, DynProducer, QueueProducer},
+    producer::{BaseDynProducer, BatchResult, DynProducer, QueueProducer},
 };
 
 /// A marker trait with utility functions meant for the creation of new

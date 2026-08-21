@@ -2,7 +2,7 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use serde::Serialize;
 
-use crate::{QueuePayload, Result};
+use crate::{QueueError, QueuePayload, Result};
 
 pub trait QueueProducer: Send + Sync + Sized {
     type Payload: QueuePayload;
@@ -20,12 +20,12 @@ pub trait QueueProducer: Send + Sync + Sized {
     fn send_raw_batch(
         &self,
         payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<BatchResult>> + Send {
         async move {
             for payload in payloads {
                 self.send_raw(payload.as_ref()).await?;
             }
-            Ok(())
+            Ok(BatchResult::OK)
         }
     }
 
@@ -40,7 +40,7 @@ pub trait QueueProducer: Send + Sync + Sized {
     fn send_bytes_batch(
         &self,
         payloads: impl IntoIterator<Item: AsRef<[u8]> + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<BatchResult>> + Send {
         async move {
             let payloads: Vec<_> = payloads
                 .into_iter()
@@ -64,7 +64,7 @@ pub trait QueueProducer: Send + Sync + Sized {
     fn send_serde_json_batch(
         &self,
         payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<BatchResult>> + Send {
         async move {
             let payloads: Vec<_> = payloads
                 .into_iter()
@@ -85,6 +85,25 @@ pub trait QueueProducer: Send + Sync + Sized {
     }
 }
 
+/// Result of a batch-send operation.
+///
+/// If a batch-send partially succeeds, the relevant method will return
+/// `Result::Ok(batch_result)`, with `batch_result` containing the positions
+/// (zero-indexed) and messages for the failures.
+#[must_use]
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct BatchResult {
+    /// List of `(position from batch-send call, error)`s.
+    pub failures: Vec<(usize, QueueError)>,
+}
+
+impl BatchResult {
+    pub(crate) const OK: Self = Self {
+        failures: Vec::new(),
+    };
+}
+
 macro_rules! ref_delegate {
     ($ty_param:ident, $ty:ty) => {
         #[deny(unconditional_recursion)]
@@ -101,7 +120,7 @@ macro_rules! ref_delegate {
             fn send_raw_batch(
                 &self,
                 payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
-            ) -> impl Future<Output = Result<()>> + Send {
+            ) -> impl Future<Output = Result<BatchResult>> + Send {
                 (**self).send_raw_batch(payloads)
             }
 
@@ -112,7 +131,7 @@ macro_rules! ref_delegate {
             fn send_bytes_batch(
                 &self,
                 payloads: impl IntoIterator<Item: AsRef<[u8]> + Send, IntoIter: Send> + Send,
-            ) -> impl Future<Output = Result<()>> + Send {
+            ) -> impl Future<Output = Result<BatchResult>> + Send {
                 (**self).send_bytes_batch(payloads)
             }
 
@@ -126,7 +145,7 @@ macro_rules! ref_delegate {
             fn send_serde_json_batch(
                 &self,
                 payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
-            ) -> impl Future<Output = Result<()>> + Send {
+            ) -> impl Future<Output = Result<BatchResult>> + Send {
                 (**self).send_serde_json_batch(payloads)
             }
 
