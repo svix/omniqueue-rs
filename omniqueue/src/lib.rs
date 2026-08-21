@@ -101,8 +101,8 @@ mod scheduled;
 #[allow(deprecated)]
 pub use self::{
     queue::{
-        Acker, BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueConsumer,
-        QueueProducer,
+        Acker, BaseDynConsumer, BaseDynProducer, BatchResult, Delivery, DynConsumer, DynProducer,
+        QueueConsumer, QueueProducer,
     },
     scheduled::{BaseDynScheduledProducer, DynScheduledProducer, ScheduledQueueProducer},
 };

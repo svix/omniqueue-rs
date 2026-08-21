@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use futures_util::{future::try_join_all, StreamExt};
+use futures_util::{future::join_all, StreamExt};
 use gcloud_googleapis::pubsub::v1::PubsubMessage;
 use gcloud_pubsub::{
     client::{google_cloud_auth::credentials::CredentialsFile, Client, ClientConfig},
@@ -16,7 +16,7 @@ use serde::Serialize;
 
 use crate::{
     queue::{Acker, Delivery},
-    QueueError, Result,
+    BatchResult, QueueError, Result,
 };
 
 pub struct GcpPubSubBackend;
@@ -168,6 +168,28 @@ impl GcpPubSubProducer {
             "redrive_dlq is not supported by GcpPubSubBackend",
         ))
     }
+
+    async fn send_batch_inner(
+        &self,
+        msgs: Vec<PubsubMessage>,
+    ) -> std::prelude::v1::Result<BatchResult, QueueError> {
+        let publisher = self.publisher().await?;
+        let awaiters = publisher.publish_bulk(msgs).await;
+        let results = join_all(awaiters.into_iter().map(|a| a.get())).await;
+
+        let failures = results
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, res)| match res {
+                Ok(_) => None,
+                // probably unreachable?
+                Err(s) if s.code() == tonic::Code::Ok => None,
+                Err(s) => Some((idx, QueueError::generic(s))),
+            })
+            .collect();
+
+        Ok(BatchResult { failures })
+    }
 }
 
 impl std::fmt::Debug for GcpPubSubProducer {
@@ -188,7 +210,7 @@ impl crate::QueueProducer for GcpPubSubProducer {
     async fn send_raw_batch(
         &self,
         payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
-    ) -> Result<()> {
+    ) -> Result<BatchResult> {
         let msgs = payloads
             .into_iter()
             .map(|payload| PubsubMessage {
@@ -197,12 +219,7 @@ impl crate::QueueProducer for GcpPubSubProducer {
             })
             .collect();
 
-        let publisher = self.publisher().await?;
-        let awaiters = publisher.publish_bulk(msgs).await;
-        try_join_all(awaiters.into_iter().map(|a| a.get()))
-            .await
-            .map_err(QueueError::generic)?;
-        Ok(())
+        self.send_batch_inner(msgs).await
     }
 
     /// This method is overwritten for the Google Cloud Pub/Sub backend to be
@@ -211,7 +228,7 @@ impl crate::QueueProducer for GcpPubSubProducer {
     async fn send_serde_json_batch(
         &self,
         payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
-    ) -> Result<()> {
+    ) -> Result<BatchResult> {
         let msgs = payloads
             .into_iter()
             .map(|payload| {
@@ -222,12 +239,7 @@ impl crate::QueueProducer for GcpPubSubProducer {
             })
             .collect::<Result<_>>()?;
 
-        let publisher = self.publisher().await?;
-        let awaiters = publisher.publish_bulk(msgs).await;
-        try_join_all(awaiters.into_iter().map(|a| a.get()))
-            .await
-            .map_err(QueueError::generic)?;
-        Ok(())
+        self.send_batch_inner(msgs).await
     }
 }
 

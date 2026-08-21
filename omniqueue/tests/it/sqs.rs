@@ -362,7 +362,8 @@ async fn test_send_raw_batch_chunks_larger_batches() {
     let payloads: Vec<Box<String>> = (0..COUNT)
         .map(|i| Box::new(format!("payload-{i}")))
         .collect();
-    p.send_raw_batch(payloads.clone()).await.unwrap();
+    let batch_res = p.send_raw_batch(payloads.clone()).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
@@ -390,7 +391,8 @@ async fn test_send_serde_json_batch_chunks_larger_batches() {
     let (p, c) = make_test_queue(None).await.build_pair().await;
 
     let payloads: Vec<ExType> = (0..COUNT).map(|i| ExType { a: i as u8 }).collect();
-    p.send_serde_json_batch(payloads).await.unwrap();
+    let batch_res = p.send_serde_json_batch(payloads).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
@@ -479,7 +481,8 @@ async fn test_send_bytes_batch_chunks_larger_batches() {
     let payloads: Vec<Vec<u8>> = (0..COUNT)
         .map(|i| format!("payload-{i}").into_bytes())
         .collect();
-    p.send_bytes_batch(payloads.clone()).await.unwrap();
+    let batch_res = p.send_bytes_batch(payloads.clone()).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
