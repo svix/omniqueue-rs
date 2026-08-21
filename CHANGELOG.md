@@ -3,6 +3,11 @@
 ## Breaking changes
 
 - Remove support for Azure queues due to the deprecation of the `azure_storage_queues` crate
+- Change signature of `Error::generic` to allow more parameter types (use
+  `impl Into<Box<dyn std::error::Error + Send + Sync>>` instead of
+  `impl std::error::Error + Send + Sync + 'static`)
+- The batch-sending methods now return `Result<BatchResult>` instead of `Result<()>`,
+  to be able to represent partially-successful batch send operations
 
 # 0.3.0
 
