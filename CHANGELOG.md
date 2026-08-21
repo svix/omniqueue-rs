@@ -9,6 +9,8 @@
 - Change signature of `Error::generic` to allow more parameter types (use
   `impl Into<Box<dyn std::error::Error + Send + Sync>>` instead of
   `impl std::error::Error + Send + Sync + 'static`)
+- The batch-sending methods now return `Result<BatchResult>` instead of `Result<()>`,
+  to be able to represent partially-successful batch send operations
 - Add the `tcp_config` field to `RedisConfig`, holding the TCP keepalive, `TCP_NODELAY` and
   `SO_LINGER` settings of the Redis connections
 

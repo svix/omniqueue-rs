@@ -6,7 +6,7 @@ use std::{
 };
 
 use aws_sdk_sqs::{
-    operation::delete_message::DeleteMessageError,
+    operation::{delete_message::DeleteMessageError, send_message_batch::SendMessageBatchOutput},
     types::{error::ReceiptHandleIsInvalid, Message, SendMessageBatchRequestEntry},
     Client,
 };
@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::{
     queue::{Acker, Delivery},
-    QueueError, Result,
+    BatchResult, QueueError, Result,
 };
 
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
@@ -321,7 +321,7 @@ impl SqsProducer {
         &self,
         payloads: impl IntoIterator<Item = I, IntoIter: Send> + Send,
         convert_payload: impl Fn(I) -> Result<String>,
-    ) -> Result<()> {
+    ) -> Result<BatchResult> {
         // Convert payloads up front and collect to Vec to run the payload size
         // check on everything before submitting the first batch.
         let payloads: Vec<_> = payloads
@@ -338,7 +338,9 @@ impl SqsProducer {
             }
         }
 
-        for payloads in payloads.chunks(MAX_BATCH_SIZE) {
+        let mut chunk_idx = 0;
+        let mut payloads_iter = payloads.chunks(MAX_BATCH_SIZE);
+        while let Some(payloads) = payloads_iter.next() {
             let entries = payloads
                 .iter()
                 .enumerate()
@@ -351,7 +353,8 @@ impl SqsProducer {
                 })
                 .collect::<Result<_>>()?;
 
-            self.client
+            let batch_result = self
+                .client
                 .send_message_batch()
                 .queue_url(&self.queue_dsn)
                 .set_entries(Some(entries))
@@ -360,9 +363,15 @@ impl SqsProducer {
                 .boxed()
                 .await
                 .map_err(aws_to_queue_error)?;
+
+            if batch_result.failed.is_empty() {
+                chunk_idx += 1;
+            } else {
+                return Ok(finalize_batch(chunk_idx, payloads_iter, batch_result));
+            }
         }
 
-        Ok(())
+        Ok(BatchResult::OK)
     }
 
     pub async fn redrive_dlq(&self) -> Result<()> {
@@ -370,6 +379,44 @@ impl SqsProducer {
             "redrive_dlq is not supported by SqsBackend",
         ))
     }
+}
+
+fn finalize_batch(
+    chunk_idx: usize,
+    remaining_payloads: std::slice::Chunks<'_, String>,
+    batch_result: SendMessageBatchOutput,
+) -> BatchResult {
+    let mut failures = Vec::new();
+    let batch_start_idx = chunk_idx * MAX_BATCH_SIZE;
+
+    for error_entry in batch_result.failed {
+        let mut msg = String::new();
+        let idx = if let Ok(idx) = error_entry.id.parse::<usize>() {
+            batch_start_idx + idx
+        } else {
+            // kinda ugly, but should never happen in practice anyways
+            msg = format!("Unexpected failed message ID `{}` AND ", error_entry.id);
+            0
+        };
+
+        write!(msg, "[{}]", error_entry.code).unwrap();
+        if let Some(message) = error_entry.message {
+            write!(msg, " {message}").unwrap();
+        }
+
+        failures.push((idx, QueueError::generic(msg)));
+    }
+
+    // if the failed chunk wasn't the last, report all remaining messages as failed
+    // without attempting to send them.
+    for (idx, _) in remaining_payloads.flatten().enumerate() {
+        failures.push((
+            batch_start_idx + idx,
+            QueueError::generic("not attempted because an earlier message failed"),
+        ));
+    }
+
+    BatchResult { failures }
 }
 
 impl crate::QueueProducer for SqsProducer {
@@ -381,7 +428,7 @@ impl crate::QueueProducer for SqsProducer {
     fn send_raw_batch(
         &self,
         payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<BatchResult>> {
         self.send_batch_inner(payloads, |p| Ok(p.as_ref().into()))
     }
 
@@ -390,7 +437,7 @@ impl crate::QueueProducer for SqsProducer {
     fn send_serde_json_batch(
         &self,
         payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<BatchResult>> {
         self.send_batch_inner(payloads, |p| Ok(serde_json::to_string(&p)?))
     }
 }
