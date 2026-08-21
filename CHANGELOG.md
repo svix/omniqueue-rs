@@ -6,6 +6,9 @@
 - Delete the `QueueBuilder` type and `QueueBackend` trait
   - The in-memory backend is now constructed using `InMemoryBackend::new_pair()`
   - Every other backend now has its own builder type now
+- Change signature of `Error::generic` to allow more parameter types (use
+  `impl Into<Box<dyn std::error::Error + Send + Sync>>` instead of
+  `impl std::error::Error + Send + Sync + 'static`)
 
 # 0.3.0
 
