@@ -1,9 +1,9 @@
 #[cfg_attr(not(feature = "beta"), allow(unused_imports))]
-use std::{fmt, future::Future, time::Duration};
+use std::{fmt, time::Duration};
 
 use serde::de::DeserializeOwned;
 
-use crate::{QueueError, QueuePayload, Result};
+use crate::{QueueError, Result};
 
 mod acker;
 mod consumer;
@@ -16,34 +16,6 @@ pub use self::{
     consumer::{BaseDynConsumer, DynConsumer, QueueConsumer},
     producer::{BaseDynProducer, DynProducer, QueueProducer},
 };
-
-/// A marker trait with utility functions meant for the creation of new
-/// producers and/or consumers.
-///
-/// This trait is meant to be implemented on an empty struct representing the
-/// backend as a whole.
-#[deprecated = "This trait is likely to be removed in the future, please open an issue if you find it useful"]
-#[allow(deprecated)]
-pub trait QueueBackend {
-    type PayloadIn: QueuePayload;
-    type PayloadOut: QueuePayload;
-
-    type Producer: QueueProducer<Payload = Self::PayloadIn>;
-    type Consumer: QueueConsumer<Payload = Self::PayloadOut>;
-
-    type Config;
-
-    #[deprecated = "Use SomeBackend::builder(config).build_pair() instead"]
-    fn new_pair(
-        config: Self::Config,
-    ) -> impl Future<Output = Result<(Self::Producer, Self::Consumer)>> + Send;
-
-    #[deprecated = "Use SomeBackend::builder(config).build_producer() instead"]
-    fn producing_half(config: Self::Config) -> impl Future<Output = Result<Self::Producer>> + Send;
-
-    #[deprecated = "Use SomeBackend::builder(config).build_consumer() instead"]
-    fn consuming_half(config: Self::Config) -> impl Future<Output = Result<Self::Consumer>> + Send;
-}
 
 /// The output of queue backends
 pub struct Delivery {

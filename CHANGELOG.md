@@ -3,7 +3,7 @@
 ## Breaking changes
 
 - Remove support for Azure queues due to the deprecation of the `azure_storage_queues` crate
-- Delete the `QueueBuilder` type
+- Delete the `QueueBuilder` type and `QueueBackend` trait
   - The in-memory backend is now constructed using `InMemoryBackend::new_pair()`
   - Every other backend now has its own builder type now
 

@@ -49,11 +49,7 @@ use thiserror::Error;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
-#[allow(deprecated)]
-use crate::{
-    queue::{Delivery, QueueBackend},
-    QueueError, Result,
-};
+use crate::{queue::Delivery, QueueError, Result};
 
 #[cfg(feature = "redis_cluster")]
 mod cluster;
@@ -339,30 +335,6 @@ impl RedisBackend {
     /// Creates a new redis sentinel queue builder with the given configuration.
     pub fn sentinel_builder(config: RedisConfig) -> RedisSentinelBackendBuilder {
         RedisBackendBuilder::new(config)
-    }
-}
-
-#[allow(deprecated)]
-impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
-    // FIXME: Is it possible to use the types Redis actually uses?
-    type PayloadIn = RawPayload;
-    type PayloadOut = RawPayload;
-
-    type Producer = RedisProducer<R>;
-    type Consumer = RedisConsumer<R>;
-
-    type Config = RedisConfig;
-
-    async fn new_pair(cfg: RedisConfig) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
-        RedisBackendBuilder::new(cfg).build_pair().await
-    }
-
-    async fn producing_half(cfg: RedisConfig) -> Result<RedisProducer<R>> {
-        RedisBackendBuilder::new(cfg).build_producer().await
-    }
-
-    async fn consuming_half(cfg: RedisConfig) -> Result<RedisConsumer<R>> {
-        RedisBackendBuilder::new(cfg).build_consumer().await
     }
 }
 
