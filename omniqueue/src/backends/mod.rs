@@ -25,4 +25,4 @@ pub use redis::{RedisBackend, RedisBackendBuilder, RedisConfig, RedisConsumer, R
 #[cfg(feature = "redis_cluster")]
 pub use redis::{RedisClusterBackend, RedisClusterBackendBuilder};
 #[cfg(feature = "sqs")]
-pub use sqs::{SqsBackend, SqsConfig, SqsConsumer, SqsProducer};
+pub use sqs::{SqsBackend, SqsBackendBuilder, SqsConfig, SqsConsumer, SqsProducer};

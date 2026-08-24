@@ -13,10 +13,8 @@ use aws_sdk_sqs::{
 use futures_util::FutureExt as _;
 use serde::Serialize;
 
-#[allow(deprecated)]
 use crate::{
-    builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend},
+    queue::{Acker, Delivery},
     QueueError, Result,
 };
 
@@ -101,86 +99,24 @@ impl From<String> for SqsConfigFull {
 
 pub struct SqsBackend;
 
-#[allow(deprecated)]
 impl SqsBackend {
     /// Creates a new Amazon SQS queue builder with the given configuration.
     ///
     /// You can pass either a queue DSN, or a [`SqsConfig`] instance here.
-    pub fn builder(cfg: impl Into<SqsConfigFull>) -> QueueBuilder<Self, Static> {
-        QueueBuilder::new(cfg.into())
-    }
-
-    #[deprecated = "Use SqsBackend::builder(cfg).build_pair() instead"]
-    pub async fn new_pair(cfg: impl Into<SqsConfigFull>) -> Result<(SqsProducer, SqsConsumer)> {
-        <Self as QueueBackend>::new_pair(cfg.into()).await
-    }
-
-    #[deprecated = "Use SqsBackend::builder(cfg).build_producer() instead"]
-    pub async fn producing_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsProducer> {
-        <Self as QueueBackend>::producing_half(cfg.into()).await
-    }
-
-    #[deprecated = "Use SqsBackend::builder(cfg).build_consumer() instead"]
-    pub async fn consuming_half(cfg: impl Into<SqsConfigFull>) -> Result<SqsConsumer> {
-        <Self as QueueBackend>::consuming_half(cfg.into()).await
+    pub fn builder(cfg: impl Into<SqsConfigFull>) -> SqsBackendBuilder {
+        SqsBackendBuilder::new(cfg.into())
     }
 }
 
-#[allow(deprecated)]
-impl QueueBackend for SqsBackend {
-    type PayloadIn = String;
-    type PayloadOut = String;
-
-    type Producer = SqsProducer;
-    type Consumer = SqsConsumer;
-
-    type Config = SqsConfigFull;
-
-    async fn new_pair(mut cfg: SqsConfigFull) -> Result<(SqsProducer, SqsConsumer)> {
-        let aws_cfg = cfg.take_sqs_config().await;
-        let client = Client::from_conf(aws_cfg);
-
-        let producer = SqsProducer {
-            client: client.clone(),
-            queue_dsn: cfg.queue_dsn.clone(),
-            max_payload_size: cfg.max_payload_size,
-        };
-
-        let consumer = SqsConsumer {
-            client,
-            queue_dsn: cfg.queue_dsn,
-        };
-
-        Ok((producer, consumer))
-    }
-
-    async fn producing_half(mut cfg: SqsConfigFull) -> Result<SqsProducer> {
-        let aws_cfg = cfg.take_sqs_config().await;
-        let client = Client::from_conf(aws_cfg);
-
-        let producer = SqsProducer {
-            client,
-            queue_dsn: cfg.queue_dsn,
-            max_payload_size: cfg.max_payload_size,
-        };
-
-        Ok(producer)
-    }
-
-    async fn consuming_half(mut cfg: SqsConfigFull) -> Result<SqsConsumer> {
-        let aws_cfg = cfg.take_sqs_config().await;
-        let client = Client::from_conf(aws_cfg);
-
-        let consumer = SqsConsumer {
-            client,
-            queue_dsn: cfg.queue_dsn,
-        };
-
-        Ok(consumer)
-    }
+pub struct SqsBackendBuilder {
+    config: SqsConfigFull,
 }
 
-impl QueueBuilder<SqsBackend> {
+impl SqsBackendBuilder {
+    fn new(config: SqsConfigFull) -> Self {
+        Self { config }
+    }
+
     /// Set the SQS configuration to use.
     ///
     /// If you _don't_ call this method, the SQS configuration will be loaded
@@ -206,6 +142,45 @@ impl QueueBuilder<SqsBackend> {
     pub fn max_payload_size(mut self, value: usize) -> Self {
         self.config.max_payload_size = value;
         self
+    }
+
+    pub async fn build_pair(mut self) -> (SqsProducer, SqsConsumer) {
+        let aws_cfg = self.config.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
+
+        let producer = SqsProducer {
+            client: client.clone(),
+            queue_dsn: self.config.queue_dsn.clone(),
+            max_payload_size: self.config.max_payload_size,
+        };
+
+        let consumer = SqsConsumer {
+            client,
+            queue_dsn: self.config.queue_dsn,
+        };
+
+        (producer, consumer)
+    }
+
+    pub async fn build_producer(mut self) -> SqsProducer {
+        let aws_cfg = self.config.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
+
+        SqsProducer {
+            client,
+            queue_dsn: self.config.queue_dsn,
+            max_payload_size: self.config.max_payload_size,
+        }
+    }
+
+    pub async fn build_consumer(mut self) -> SqsConsumer {
+        let aws_cfg = self.config.take_sqs_config().await;
+        let client = Client::from_conf(aws_cfg);
+
+        SqsConsumer {
+            client,
+            queue_dsn: self.config.queue_dsn,
+        }
     }
 }
 

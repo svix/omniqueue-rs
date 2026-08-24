@@ -35,12 +35,11 @@
 //! };
 //!
 //! // Either both producer and consumer
-//! let (p, mut c) = SqsBackend::builder(cfg.clone()).build_pair().await?;
+//! let (p, mut c) = SqsBackend::builder(cfg.clone()).build_pair().await;
 //!
 //! // Or one half
-//! let p = SqsBackend::builder(cfg.clone()).build_producer().await?;
-//! let mut c = SqsBackend::builder(cfg).build_consumer().await?;
-//! # anyhow::Ok(())
+//! let p = SqsBackend::builder(cfg.clone()).build_producer().await;
+//! let mut c = SqsBackend::builder(cfg).build_consumer().await;
 //! # };
 //! ```
 //!
@@ -52,7 +51,7 @@
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
 //! #
-//! # let (p, mut c) = SqsBackend::builder("<dsn>").build_pair().await?;
+//! # let (p, mut c) = SqsBackend::builder("<dsn>").build_pair().await;
 //! p.send_serde_json(&ExampleType::default()).await?;
 //!
 //! let delivery = c.receive().await?;
