@@ -35,12 +35,11 @@
 //! };
 //!
 //! // Either both producer and consumer
-//! let (p, mut c) = SqsBackend::builder(cfg.clone()).build_pair().await?;
+//! let (p, mut c) = SqsBackend::builder(cfg.clone()).build_pair().await;
 //!
 //! // Or one half
-//! let p = SqsBackend::builder(cfg.clone()).build_producer().await?;
-//! let mut c = SqsBackend::builder(cfg).build_consumer().await?;
-//! # anyhow::Ok(())
+//! let p = SqsBackend::builder(cfg.clone()).build_producer().await;
+//! let mut c = SqsBackend::builder(cfg).build_consumer().await;
 //! # };
 //! ```
 //!
@@ -52,7 +51,7 @@
 //! # #[derive(Default, serde::Deserialize, serde::Serialize)]
 //! # struct ExampleType;
 //! #
-//! # let (p, mut c) = SqsBackend::builder("<dsn>").build_pair().await?;
+//! # let (p, mut c) = SqsBackend::builder("<dsn>").build_pair().await;
 //! p.send_serde_json(&ExampleType::default()).await?;
 //!
 //! let delivery = c.receive().await?;
@@ -67,18 +66,21 @@
 //! Dynamic-dispatch can be used easily for when you're not sure which backend
 //! to use at compile-time.
 //!
-//! Making a `DynProducer` or `DynConsumer` is as simple as adding one line to
-//! the builder:
+//! Making a `DynProducer` or `DynConsumer` is as calling `.into_dyn()` on a
+//! consumer or producer (or `.into_dyn_scheduled()` for the producer if you
+//! need scheduled sending):
 //!
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::backends::RabbitMqBackend;
+//! use omniqueue::{
+//!     backends::RabbitMqBackend,
+//!     ScheduledQueueProducer, QueueConsumer,
+//! };
 //!
-//! let (p, mut c) = RabbitMqBackend::builder(cfg)
-//!     .make_dynamic()
-//!     .build_pair()
-//!     .await?;
+//! let (p, c) = RabbitMqBackend::builder(cfg).build_pair().await?;
+//! let p = p.into_dyn_scheduled();
+//! let mut c = c.into_dyn();
 //! # anyhow::Ok(())
 //! # };
 //! ```
@@ -93,16 +95,14 @@ use thiserror::Error;
 mod macros;
 
 pub mod backends;
-pub mod builder;
 mod queue;
 mod scheduled;
 
 #[allow(deprecated)]
 pub use self::{
-    builder::QueueBuilder,
     queue::{
-        Acker, BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueBackend,
-        QueueConsumer, QueueProducer,
+        Acker, BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueConsumer,
+        QueueProducer,
     },
     scheduled::{BaseDynScheduledProducer, DynScheduledProducer, ScheduledQueueProducer},
 };
@@ -113,9 +113,6 @@ pub type Result<T, E = QueueError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum QueueError {
-    #[error("only `new_pair` may be used with this type")]
-    CannotCreateHalf,
-
     #[error("a single delivery may only be ACKed or NACKed once")]
     CannotAckOrNackTwice,
 

@@ -3,10 +3,8 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
-#[allow(deprecated)]
 use crate::{
-    builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend},
+    queue::{Acker, Delivery},
     QueueError, Result,
 };
 
@@ -14,37 +12,13 @@ pub struct InMemoryBackend;
 
 impl InMemoryBackend {
     /// Creates a new in-memory queue builder.
-    pub fn builder() -> QueueBuilder<Self, Static> {
-        #[allow(deprecated)]
-        QueueBuilder::new(())
-    }
-}
-
-#[allow(deprecated)]
-impl QueueBackend for InMemoryBackend {
-    type PayloadIn = Vec<u8>;
-    type PayloadOut = Vec<u8>;
-
-    type Producer = InMemoryProducer;
-    type Consumer = InMemoryConsumer;
-
-    type Config = ();
-
-    async fn new_pair(_config: ()) -> Result<(InMemoryProducer, InMemoryConsumer)> {
+    pub fn new_pair() -> (InMemoryProducer, InMemoryConsumer) {
         let (tx, rx) = mpsc::unbounded_channel();
 
-        Ok((
+        (
             InMemoryProducer { tx: tx.clone() },
             InMemoryConsumer { tx, rx },
-        ))
-    }
-
-    async fn producing_half(_config: ()) -> Result<InMemoryProducer> {
-        Err(QueueError::CannotCreateHalf)
-    }
-
-    async fn consuming_half(_config: ()) -> Result<InMemoryConsumer> {
-        Err(QueueError::CannotCreateHalf)
+        )
     }
 }
 
@@ -222,7 +196,7 @@ mod tests {
 
     #[tokio::test]
     async fn simple_queue_test() {
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_serde_json(&TypeA { a: 13 }).await.unwrap();
         assert_eq!(
@@ -256,7 +230,7 @@ mod tests {
     async fn test_send_recv_all_partial() {
         let payload = ExType { a: 2 };
 
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_serde_json(&payload).await.unwrap();
         let deadline = Duration::from_secs(1);
@@ -277,7 +251,7 @@ mod tests {
         let payload1 = ExType { a: 1 };
         let payload2 = ExType { a: 2 };
 
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_serde_json(&payload1).await.unwrap();
         p.send_serde_json(&payload2).await.unwrap();
@@ -312,7 +286,7 @@ mod tests {
         let payload2 = ExType { a: 2 };
         let payload3 = ExType { a: 3 };
 
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_serde_json(&payload1).await.unwrap();
         p.send_serde_json(&payload2).await.unwrap();
@@ -353,7 +327,7 @@ mod tests {
     /// Consumer will NOT wait indefinitely for at least one item.
     #[tokio::test]
     async fn test_send_recv_all_late_arriving_items() {
-        let (_p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (_p, mut c) = InMemoryBackend::new_pair();
 
         let deadline = Duration::from_secs(1);
         let now = Instant::now();
@@ -370,7 +344,7 @@ mod tests {
     async fn test_scheduled() {
         let payload1 = ExType { a: 1 };
 
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         let delay = Duration::from_millis(100);
         let now = Instant::now();
@@ -389,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_len() {
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         assert!(c.is_empty());
 
@@ -417,7 +391,7 @@ mod tests {
     async fn test_nack_re_enqueues() {
         let payload = ExType { a: 42 };
 
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_serde_json(&payload).await.unwrap();
 
@@ -449,7 +423,7 @@ mod tests {
     /// accessor yields nothing.
     #[tokio::test]
     async fn test_take_payload_consumes_bytes() {
-        let (p, mut c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, mut c) = InMemoryBackend::new_pair();
 
         p.send_bytes(b"hello").await.unwrap();
 
@@ -462,25 +436,11 @@ mod tests {
         assert_eq!(delivery.payload_serde_json::<u8>().unwrap(), None);
     }
 
-    /// The in-memory backend can only be built as a pair; requesting a single
-    /// half should fail.
-    #[tokio::test]
-    async fn test_split_halves_unsupported() {
-        assert!(matches!(
-            InMemoryBackend::builder().build_producer().await,
-            Err(QueueError::CannotCreateHalf)
-        ));
-        assert!(matches!(
-            InMemoryBackend::builder().build_consumer().await,
-            Err(QueueError::CannotCreateHalf)
-        ));
-    }
-
     /// The in-memory backend has no dead-letter queue, so redriving is
     /// unsupported.
     #[tokio::test]
     async fn test_redrive_dlq_unsupported() {
-        let (p, _c) = InMemoryBackend::builder().build_pair().await.unwrap();
+        let (p, _c) = InMemoryBackend::new_pair();
         assert!(matches!(
             p.redrive_dlq().await,
             Err(QueueError::Unsupported(_))

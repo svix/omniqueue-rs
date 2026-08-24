@@ -49,12 +49,7 @@ use thiserror::Error;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
-#[allow(deprecated)]
-use crate::{
-    builder::{Dynamic, Static},
-    queue::{Delivery, QueueBackend},
-    DynConsumer, DynProducer, QueueConsumer as _, QueueError, QueueProducer as _, Result,
-};
+use crate::{queue::Delivery, QueueError, Result};
 
 #[cfg(feature = "redis_cluster")]
 mod cluster;
@@ -343,36 +338,12 @@ impl RedisBackend {
     }
 }
 
-#[allow(deprecated)]
-impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
-    // FIXME: Is it possible to use the types Redis actually uses?
-    type PayloadIn = RawPayload;
-    type PayloadOut = RawPayload;
-
-    type Producer = RedisProducer<R>;
-    type Consumer = RedisConsumer<R>;
-
-    type Config = RedisConfig;
-
-    async fn new_pair(cfg: RedisConfig) -> Result<(RedisProducer<R>, RedisConsumer<R>)> {
-        RedisBackendBuilder::new(cfg).build_pair().await
-    }
-
-    async fn producing_half(cfg: RedisConfig) -> Result<RedisProducer<R>> {
-        RedisBackendBuilder::new(cfg).build_producer().await
-    }
-
-    async fn consuming_half(cfg: RedisConfig) -> Result<RedisConsumer<R>> {
-        RedisBackendBuilder::new(cfg).build_consumer().await
-    }
-}
-
-pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
+pub struct RedisBackendBuilder<R = RedisConnectionManager> {
     config: RedisConfig,
     use_redis_streams: bool,
     processing_queue_key: Option<String>,
     background_task_poll_interval: Option<Duration>,
-    _phantom: PhantomData<fn() -> (R, S)>,
+    _phantom: PhantomData<fn() -> R>,
 }
 
 #[cfg(feature = "redis_cluster")]
@@ -392,7 +363,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         }
     }
 
-    fn map_phantom<R2, S2>(self) -> RedisBackendBuilder<R2, S2> {
+    fn map_phantom<R2>(self) -> RedisBackendBuilder<R2> {
         RedisBackendBuilder {
             config: self.config,
             use_redis_streams: self.use_redis_streams,
@@ -535,10 +506,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         })
     }
 
-    pub fn make_dynamic(self) -> RedisBackendBuilder<R, Dynamic> {
-        self.map_phantom()
-    }
-
     // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way to
     // implement it in a way that makes good sense here.
     // We need access to the pool, and various bits of config to spawn a task, but
@@ -621,26 +588,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         });
 
         Arc::new(join_set)
-    }
-}
-
-impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
-    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
-        #[allow(deprecated)]
-        let (p, c) = RedisBackend::<R>::new_pair(self.config).await?;
-        Ok((p.into_dyn(), c.into_dyn()))
-    }
-
-    pub async fn build_producer(self) -> Result<DynProducer> {
-        #[allow(deprecated)]
-        let p = RedisBackend::<R>::producing_half(self.config).await?;
-        Ok(p.into_dyn())
-    }
-
-    pub async fn build_consumer(self) -> Result<DynConsumer> {
-        #[allow(deprecated)]
-        let c = RedisBackend::<R>::consuming_half(self.config).await?;
-        Ok(c.into_dyn())
     }
 }
 

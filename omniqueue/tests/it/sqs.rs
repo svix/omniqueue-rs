@@ -6,8 +6,8 @@ use std::{
 use assert_matches::assert_matches;
 use aws_sdk_sqs::{types::QueueAttributeName, Client};
 use omniqueue::{
-    backends::{SqsBackend, SqsConfig, SqsConsumer},
-    Delivery, QueueBuilder, QueueError,
+    backends::{SqsBackend, SqsBackendBuilder, SqsConfig, SqsConsumer},
+    Delivery, QueueError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,7 +60,7 @@ async fn make_test_queue_config(visibility_timeout: Option<Duration>) -> SqsConf
 /// Returns a [`QueueBuilder`] configured to connect to a fresh temporary queue.
 ///
 /// See [`make_test_queue_config`].
-async fn make_test_queue(visibility_timeout: Option<Duration>) -> QueueBuilder<SqsBackend> {
+async fn make_test_queue(visibility_timeout: Option<Duration>) -> SqsBackendBuilder {
     SqsBackend::builder(make_test_queue_config(visibility_timeout).await)
 }
 
@@ -102,7 +102,7 @@ async fn receive_n(c: &SqsConsumer, count: usize) -> Vec<Delivery> {
 #[tokio::test]
 async fn test_raw_send_recv() {
     let payload = "{\"test\": \"data\"}";
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_raw(payload).await.unwrap();
 
@@ -115,7 +115,7 @@ async fn test_bytes_send_recv() {
     use omniqueue::QueueProducer as _;
 
     let payload = b"hello";
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_bytes(payload).await.unwrap();
 
@@ -132,7 +132,7 @@ pub struct ExType {
 #[tokio::test]
 async fn test_serde_send_recv() {
     let payload = ExType { a: 2 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -146,7 +146,7 @@ async fn test_serde_send_recv() {
 #[tokio::test]
 async fn test_send_recv_all_partial() {
     let payload = ExType { a: 2 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_serde_json(&payload).await.unwrap();
     let timeout = Duration::from_secs(1);
@@ -166,7 +166,7 @@ async fn test_send_recv_all_partial() {
 async fn test_send_recv_all_full() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
@@ -200,7 +200,7 @@ async fn test_send_recv_all_full_then_partial() {
     let payload1 = ExType { a: 1 };
     let payload2 = ExType { a: 2 };
     let payload3 = ExType { a: 3 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_serde_json(&payload1).await.unwrap();
     p.send_serde_json(&payload2).await.unwrap();
@@ -241,7 +241,7 @@ async fn test_send_recv_all_full_then_partial() {
 /// Consumer will NOT wait indefinitely for at least one item.
 #[tokio::test]
 async fn test_send_recv_all_late_arriving_items() {
-    let (_p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (_p, c) = make_test_queue(None).await.build_pair().await;
 
     let timeout = Duration::from_secs(1);
     let now = Instant::now();
@@ -257,7 +257,7 @@ async fn test_send_recv_all_late_arriving_items() {
 #[tokio::test]
 async fn test_scheduled() {
     let payload1 = ExType { a: 1 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     let delay = Duration::from_secs(3);
     let now = Instant::now();
@@ -283,8 +283,7 @@ async fn test_nack_is_a_noop_and_redelivery_awaits_visibility_timeout() {
     let (p, c) = make_test_queue(Some(VISIBILITY_TIMEOUT))
         .await
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -311,8 +310,7 @@ async fn test_ack_prevents_redelivery() {
     let (p, c) = make_test_queue(Some(VISIBILITY_TIMEOUT))
         .await
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -333,8 +331,7 @@ async fn test_set_ack_deadline_extends_the_visibility_timeout() {
     let (p, c) = make_test_queue(Some(VISIBILITY_TIMEOUT))
         .await
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -358,7 +355,7 @@ async fn test_send_raw_batch_chunks_larger_batches() {
     // Deliberately spans three chunks: 10 + 10 + 5.
     const COUNT: usize = 25;
 
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     // `Item: AsRef<Self::Payload>` is satisfied by `Box<String>`, which is what
     // `QueuePayload::from_bytes_naive` hands back.
@@ -390,7 +387,7 @@ async fn test_send_serde_json_batch_chunks_larger_batches() {
     // Deliberately spans three chunks: 10 + 10 + 5.
     const COUNT: usize = 25;
 
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     let payloads: Vec<ExType> = (0..COUNT).map(|i| ExType { a: i as u8 }).collect();
     p.send_serde_json_batch(payloads).await.unwrap();
@@ -416,8 +413,7 @@ async fn test_send_raw_rejects_oversized_payload() {
         .await
         .max_payload_size(8)
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     let err = p.send_raw("123456789").await.unwrap_err();
     assert_matches!(
@@ -441,8 +437,7 @@ async fn test_send_raw_batch_rejects_oversized_payload_before_sending() {
         .await
         .max_payload_size(8)
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     // The oversized payload lands in the second chunk of 10, so a check done
     // per-chunk rather than up front would already have sent the first chunk.
@@ -460,7 +455,7 @@ async fn test_send_raw_batch_rejects_oversized_payload_before_sending() {
 /// trip.
 #[tokio::test]
 async fn test_send_scheduled_rejects_too_large_delay() {
-    let (p, _c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, _c) = make_test_queue(None).await.build_pair().await;
 
     let err = p
         .send_raw_scheduled("{}", Duration::from_secs(u32::MAX.into()))
@@ -479,7 +474,7 @@ async fn test_send_bytes_batch_chunks_larger_batches() {
     // Deliberately spans three chunks: 10 + 10 + 5.
     const COUNT: usize = 25;
 
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     let payloads: Vec<Vec<u8>> = (0..COUNT)
         .map(|i| format!("payload-{i}").into_bytes())
@@ -507,7 +502,7 @@ async fn test_send_bytes_batch_chunks_larger_batches() {
 #[tokio::test]
 async fn test_set_ack_deadline_rejects_too_large_duration() {
     let payload = ExType { a: 7 };
-    let (p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, c) = make_test_queue(None).await.build_pair().await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -529,8 +524,7 @@ async fn test_override_endpoint_config_option() {
     let (p, c) = SqsBackend::builder(queue_dsn)
         .override_endpoint(true)
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -554,8 +548,7 @@ async fn test_sqs_config_is_used_instead_of_the_environment() {
     let (p, c) = SqsBackend::builder(queue_dsn)
         .sqs_config(sdk_config(ROOT_URL))
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -579,8 +572,7 @@ async fn test_sqs_config_takes_precedence_over_override_endpoint() {
         .override_endpoint(true)
         .sqs_config(sdk_config("http://127.0.0.1:1"))
         .build_producer()
-        .await
-        .unwrap();
+        .await;
 
     assert_matches!(
         p.send_serde_json(&payload).await.unwrap_err(),
@@ -592,8 +584,7 @@ async fn test_sqs_config_takes_precedence_over_override_endpoint() {
     let (p, c) = SqsBackend::builder(queue_dsn)
         .override_endpoint(true)
         .build_pair()
-        .await
-        .unwrap();
+        .await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -608,11 +599,8 @@ async fn test_producing_and_consuming_halves_can_be_built_separately() {
     let payload = ExType { a: 4 };
     let config = make_test_queue_config(None).await;
 
-    let p = SqsBackend::builder(config.clone())
-        .build_producer()
-        .await
-        .unwrap();
-    let c = SqsBackend::builder(config).build_consumer().await.unwrap();
+    let p = SqsBackend::builder(config.clone()).build_producer().await;
+    let c = SqsBackend::builder(config).build_consumer().await;
 
     p.send_serde_json(&payload).await.unwrap();
 
@@ -623,7 +611,7 @@ async fn test_producing_and_consuming_halves_can_be_built_separately() {
 
 #[tokio::test]
 async fn test_redrive_dlq_unsupported() {
-    let (p, _c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (p, _c) = make_test_queue(None).await.build_pair().await;
 
     let err = p.redrive_dlq().await.unwrap_err();
     assert_matches!(err, QueueError::Unsupported(_));
@@ -634,7 +622,7 @@ async fn test_redrive_dlq_unsupported() {
 async fn test_max_messages() {
     use omniqueue::QueueConsumer as _;
 
-    let (_p, c) = make_test_queue(None).await.build_pair().await.unwrap();
+    let (_p, c) = make_test_queue(None).await.build_pair().await;
 
     assert_eq!(c.max_messages(), NonZeroUsize::new(10));
 }

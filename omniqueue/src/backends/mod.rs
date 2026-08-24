@@ -10,14 +10,19 @@ pub mod redis;
 pub mod sqs;
 
 #[cfg(feature = "gcp_pubsub")]
-pub use gcp_pubsub::{GcpPubSubBackend, GcpPubSubConfig, GcpPubSubConsumer, GcpPubSubProducer};
+pub use gcp_pubsub::{
+    GcpPubSubBackend, GcpPubSubBackendBuilder, GcpPubSubConfig, GcpPubSubConsumer,
+    GcpPubSubProducer,
+};
 #[cfg(feature = "in_memory")]
 pub use in_memory::{InMemoryBackend, InMemoryConsumer, InMemoryProducer};
 #[cfg(feature = "rabbitmq")]
-pub use rabbitmq::{RabbitMqBackend, RabbitMqConfig, RabbitMqConsumer, RabbitMqProducer};
+pub use rabbitmq::{
+    RabbitMqBackend, RabbitMqBackendBuilder, RabbitMqConfig, RabbitMqConsumer, RabbitMqProducer,
+};
 #[cfg(feature = "redis")]
 pub use redis::{RedisBackend, RedisBackendBuilder, RedisConfig, RedisConsumer, RedisProducer};
 #[cfg(feature = "redis_cluster")]
 pub use redis::{RedisClusterBackend, RedisClusterBackendBuilder};
 #[cfg(feature = "sqs")]
-pub use sqs::{SqsBackend, SqsConfig, SqsConsumer, SqsProducer};
+pub use sqs::{SqsBackend, SqsBackendBuilder, SqsConfig, SqsConsumer, SqsProducer};
