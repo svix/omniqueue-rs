@@ -63,8 +63,8 @@ use gcloud_pubsub::{
     subscription::SubscriptionConfig,
 };
 use omniqueue::{
-    backends::{GcpPubSubBackend, GcpPubSubConfig, GcpPubSubConsumer},
-    Delivery, QueueBuilder, QueueError,
+    backends::{GcpPubSubBackend, GcpPubSubBackendBuilder, GcpPubSubConfig, GcpPubSubConsumer},
+    Delivery, QueueError,
 };
 use serde::{Deserialize, Serialize};
 
@@ -139,7 +139,7 @@ async fn make_test_queue_config() -> GcpPubSubConfig {
 /// Returns a [`QueueBuilder`] pointed at a fresh temporary topic/subscription.
 ///
 /// See [`make_test_queue_config`].
-async fn make_test_queue() -> QueueBuilder<GcpPubSubBackend> {
+async fn make_test_queue() -> GcpPubSubBackendBuilder {
     GcpPubSubBackend::builder(make_test_queue_config().await)
 }
 

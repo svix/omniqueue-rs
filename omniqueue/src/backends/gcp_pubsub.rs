@@ -14,10 +14,8 @@ use gcloud_pubsub::{
 };
 use serde::Serialize;
 
-#[allow(deprecated)]
 use crate::{
-    builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend},
+    queue::{Acker, Delivery},
     QueueError, Result,
 };
 
@@ -26,9 +24,36 @@ pub struct GcpPubSubBackend;
 impl GcpPubSubBackend {
     /// Creates a new Google Cloud Pub/Sub queue builder with the given
     /// configuration.
-    pub fn builder(config: GcpPubSubConfig) -> QueueBuilder<Self, Static> {
-        #[allow(deprecated)]
-        QueueBuilder::new(config)
+    pub fn builder(config: GcpPubSubConfig) -> GcpPubSubBackendBuilder {
+        GcpPubSubBackendBuilder::new(config)
+    }
+}
+
+pub struct GcpPubSubBackendBuilder {
+    config: GcpPubSubConfig,
+}
+
+impl GcpPubSubBackendBuilder {
+    fn new(config: GcpPubSubConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn build_pair(self) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
+        let client = get_client(&self.config).await?;
+        Ok((
+            GcpPubSubProducer::new(client.clone(), self.config.topic_id).await?,
+            GcpPubSubConsumer::new(client, self.config.subscription_id).await?,
+        ))
+    }
+
+    pub async fn build_producer(self) -> Result<GcpPubSubProducer> {
+        let client = get_client(&self.config).await?;
+        GcpPubSubProducer::new(client, self.config.topic_id).await
+    }
+
+    pub async fn build_consumer(self) -> Result<GcpPubSubConsumer> {
+        let client = get_client(&self.config).await?;
+        GcpPubSubConsumer::new(client, self.config.subscription_id).await
     }
 }
 
@@ -75,35 +100,6 @@ async fn get_client(cfg: &GcpPubSubConfig) -> Result<Client> {
         }
     };
     Client::new(config).await.map_err(QueueError::generic)
-}
-
-#[allow(deprecated)]
-impl QueueBackend for GcpPubSubBackend {
-    type Config = GcpPubSubConfig;
-
-    type PayloadIn = Payload;
-    type PayloadOut = Payload;
-
-    type Producer = GcpPubSubProducer;
-    type Consumer = GcpPubSubConsumer;
-
-    async fn new_pair(config: Self::Config) -> Result<(GcpPubSubProducer, GcpPubSubConsumer)> {
-        let client = get_client(&config).await?;
-        Ok((
-            GcpPubSubProducer::new(client.clone(), config.topic_id).await?,
-            GcpPubSubConsumer::new(client, config.subscription_id).await?,
-        ))
-    }
-
-    async fn producing_half(config: Self::Config) -> Result<GcpPubSubProducer> {
-        let client = get_client(&config).await?;
-        GcpPubSubProducer::new(client, config.topic_id).await
-    }
-
-    async fn consuming_half(config: Self::Config) -> Result<GcpPubSubConsumer> {
-        let client = get_client(&config).await?;
-        GcpPubSubConsumer::new(client, config.subscription_id).await
-    }
 }
 
 pub struct GcpPubSubProducer {
