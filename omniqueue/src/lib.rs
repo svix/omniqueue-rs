@@ -113,9 +113,6 @@ pub type Result<T, E = QueueError> = std::result::Result<T, E>;
 
 #[derive(Debug, Error)]
 pub enum QueueError {
-    #[error("only `new_pair` may be used with this type")]
-    CannotCreateHalf,
-
     #[error("a single delivery may only be ACKed or NACKed once")]
     CannotAckOrNackTwice,
 
