@@ -50,15 +50,5 @@ While the exact configuration will depend on the backend used, usage is roughly 
 
    The producer and consumers returned implement the `QueueProducer` and `QueueConsumer` traits
    respectively. This means you can make functions generic over any queue backend. Alternatively, if
-   you need dynamic dispatch, it's as simple as one extra line in the builder:
-
-   ```rust
-   let cfg = SqsConfig {
-       queue_dsn: "http://localhost:9324/queue/queue_name".to_owned(),
-       override_endpoint: true,
-   };
-   let (producer, mut consumer) = SqsBackend::builder(cfg)
-       .make_dynamic()
-       .build_pair()
-       .await?;
-   ```
+   you need dynamic dispatch, call `.into_dyn()` on a consumer or producer
+   (or `.into_dyn_scheduled()` on the producer side if you need scheduled sending).

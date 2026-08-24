@@ -66,18 +66,21 @@
 //! Dynamic-dispatch can be used easily for when you're not sure which backend
 //! to use at compile-time.
 //!
-//! Making a `DynProducer` or `DynConsumer` is as simple as adding one line to
-//! the builder:
+//! Making a `DynProducer` or `DynConsumer` is as calling `.into_dyn()` on a
+//! consumer or producer (or `.into_dyn_scheduled()` for the producer if you
+//! need scheduled sending):
 //!
 //! ```no_run
 //! # async {
 //! # let cfg = todo!();
-//! use omniqueue::backends::RabbitMqBackend;
+//! use omniqueue::{
+//!     backends::RabbitMqBackend,
+//!     ScheduledQueueProducer, QueueConsumer,
+//! };
 //!
-//! let (p, mut c) = RabbitMqBackend::builder(cfg)
-//!     .make_dynamic()
-//!     .build_pair()
-//!     .await?;
+//! let (p, c) = RabbitMqBackend::builder(cfg).build_pair().await?;
+//! let p = p.into_dyn_scheduled();
+//! let mut c = c.into_dyn();
 //! # anyhow::Ok(())
 //! # };
 //! ```
