@@ -51,9 +51,8 @@ use tracing::{debug, error, info, trace, warn};
 
 #[allow(deprecated)]
 use crate::{
-    builder::{Dynamic, Static},
     queue::{Delivery, QueueBackend},
-    DynConsumer, DynProducer, QueueConsumer as _, QueueError, QueueProducer as _, Result,
+    QueueError, Result,
 };
 
 #[cfg(feature = "redis_cluster")]
@@ -367,12 +366,12 @@ impl<R: RedisConnection> QueueBackend for RedisBackend<R> {
     }
 }
 
-pub struct RedisBackendBuilder<R = RedisConnectionManager, S = Static> {
+pub struct RedisBackendBuilder<R = RedisConnectionManager> {
     config: RedisConfig,
     use_redis_streams: bool,
     processing_queue_key: Option<String>,
     background_task_poll_interval: Option<Duration>,
-    _phantom: PhantomData<fn() -> (R, S)>,
+    _phantom: PhantomData<fn() -> R>,
 }
 
 #[cfg(feature = "redis_cluster")]
@@ -392,7 +391,7 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         }
     }
 
-    fn map_phantom<R2, S2>(self) -> RedisBackendBuilder<R2, S2> {
+    fn map_phantom<R2>(self) -> RedisBackendBuilder<R2> {
         RedisBackendBuilder {
             config: self.config,
             use_redis_streams: self.use_redis_streams,
@@ -535,10 +534,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         })
     }
 
-    pub fn make_dynamic(self) -> RedisBackendBuilder<R, Dynamic> {
-        self.map_phantom()
-    }
-
     // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way to
     // implement it in a way that makes good sense here.
     // We need access to the pool, and various bits of config to spawn a task, but
@@ -621,26 +616,6 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         });
 
         Arc::new(join_set)
-    }
-}
-
-impl<R: RedisConnection> RedisBackendBuilder<R, Dynamic> {
-    pub async fn build_pair(self) -> Result<(DynProducer, DynConsumer)> {
-        #[allow(deprecated)]
-        let (p, c) = RedisBackend::<R>::new_pair(self.config).await?;
-        Ok((p.into_dyn(), c.into_dyn()))
-    }
-
-    pub async fn build_producer(self) -> Result<DynProducer> {
-        #[allow(deprecated)]
-        let p = RedisBackend::<R>::producing_half(self.config).await?;
-        Ok(p.into_dyn())
-    }
-
-    pub async fn build_consumer(self) -> Result<DynConsumer> {
-        #[allow(deprecated)]
-        let c = RedisBackend::<R>::consuming_half(self.config).await?;
-        Ok(c.into_dyn())
     }
 }
 
