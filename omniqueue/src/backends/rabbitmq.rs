@@ -12,10 +12,8 @@ pub use lapin::{
 };
 use serde::Serialize;
 
-#[allow(deprecated)]
 use crate::{
-    builder::{QueueBuilder, Static},
-    queue::{Acker, Delivery, QueueBackend},
+    queue::{Acker, Delivery},
     QueueError, Result,
 };
 
@@ -42,9 +40,45 @@ pub struct RabbitMqBackend;
 
 impl RabbitMqBackend {
     /// Creates a new RabbitMQ queue builder with the given configuration.
-    pub fn builder(config: RabbitMqConfig) -> QueueBuilder<Self, Static> {
-        #[allow(deprecated)]
-        QueueBuilder::new(config)
+    pub fn builder(config: RabbitMqConfig) -> RabbitMqBackendBuilder {
+        RabbitMqBackendBuilder::new(config)
+    }
+}
+
+pub struct RabbitMqBackendBuilder {
+    config: RabbitMqConfig,
+}
+
+impl RabbitMqBackendBuilder {
+    fn new(config: RabbitMqConfig) -> Self {
+        Self { config }
+    }
+
+    pub async fn build_pair(self) -> Result<(RabbitMqProducer, RabbitMqConsumer)> {
+        let conn = Connection::connect(&self.config.uri, self.config.connection_properties.clone())
+            .await
+            .map_err(QueueError::generic)?;
+
+        Ok((
+            producer(&conn, self.config.clone()).await?,
+            consumer(&conn, self.config).await?,
+        ))
+    }
+
+    pub async fn build_producer(self) -> Result<RabbitMqProducer> {
+        let conn = Connection::connect(&self.config.uri, self.config.connection_properties.clone())
+            .await
+            .map_err(QueueError::generic)?;
+
+        producer(&conn, self.config).await
+    }
+
+    pub async fn build_consumer(self) -> Result<RabbitMqConsumer> {
+        let conn = Connection::connect(&self.config.uri, self.config.connection_properties.clone())
+            .await
+            .map_err(QueueError::generic)?;
+
+        consumer(&conn, self.config).await
     }
 }
 
@@ -81,44 +115,6 @@ async fn producer(conn: &Connection, cfg: RabbitMqConfig) -> Result<RabbitMqProd
         options: cfg.publish_options,
         properties: cfg.publish_properties.clone(),
     })
-}
-
-#[allow(deprecated)]
-impl QueueBackend for RabbitMqBackend {
-    type PayloadIn = Vec<u8>;
-    type PayloadOut = Vec<u8>;
-
-    type Producer = RabbitMqProducer;
-    type Consumer = RabbitMqConsumer;
-
-    type Config = RabbitMqConfig;
-
-    async fn new_pair(cfg: RabbitMqConfig) -> Result<(RabbitMqProducer, RabbitMqConsumer)> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
-            .await
-            .map_err(QueueError::generic)?;
-
-        Ok((
-            producer(&conn, cfg.clone()).await?,
-            consumer(&conn, cfg.clone()).await?,
-        ))
-    }
-
-    async fn producing_half(cfg: RabbitMqConfig) -> Result<RabbitMqProducer> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
-            .await
-            .map_err(QueueError::generic)?;
-
-        producer(&conn, cfg.clone()).await
-    }
-
-    async fn consuming_half(cfg: RabbitMqConfig) -> Result<RabbitMqConsumer> {
-        let conn = Connection::connect(&cfg.uri, cfg.connection_properties.clone())
-            .await
-            .map_err(QueueError::generic)?;
-
-        consumer(&conn, cfg.clone()).await
-    }
 }
 
 pub struct RabbitMqProducer {

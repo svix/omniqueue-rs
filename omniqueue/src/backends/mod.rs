@@ -17,7 +17,9 @@ pub use gcp_pubsub::{
 #[cfg(feature = "in_memory")]
 pub use in_memory::{InMemoryBackend, InMemoryConsumer, InMemoryProducer};
 #[cfg(feature = "rabbitmq")]
-pub use rabbitmq::{RabbitMqBackend, RabbitMqConfig, RabbitMqConsumer, RabbitMqProducer};
+pub use rabbitmq::{
+    RabbitMqBackend, RabbitMqBackendBuilder, RabbitMqConfig, RabbitMqConsumer, RabbitMqProducer,
+};
 #[cfg(feature = "redis")]
 pub use redis::{RedisBackend, RedisBackendBuilder, RedisConfig, RedisConsumer, RedisProducer};
 #[cfg(feature = "redis_cluster")]
