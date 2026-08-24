@@ -95,13 +95,11 @@ use thiserror::Error;
 mod macros;
 
 pub mod backends;
-pub mod builder;
 mod queue;
 mod scheduled;
 
 #[allow(deprecated)]
 pub use self::{
-    builder::QueueBuilder,
     queue::{
         Acker, BaseDynConsumer, BaseDynProducer, Delivery, DynConsumer, DynProducer, QueueBackend,
         QueueConsumer, QueueProducer,
