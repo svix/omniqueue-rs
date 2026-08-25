@@ -193,4 +193,11 @@ impl<'a> BaseDynProducer<'a> {
 impl<'a> crate::QueueProducer for BaseDynProducer<'a> {
     type Payload = Vec<u8>;
     omni_delegate!(send_raw, send_serde_json, redrive_dlq);
+
+    fn into_dyn<'b>(self) -> BaseDynProducer<'b>
+    where
+        Self: 'b,
+    {
+        self
+    }
 }

@@ -155,4 +155,11 @@ impl<'a> crate::QueueProducer for BaseDynScheduledProducer<'a> {
 }
 impl<'a> crate::ScheduledQueueProducer for BaseDynScheduledProducer<'a> {
     omni_delegate!(send_raw_scheduled, send_serde_json_scheduled);
+
+    fn into_dyn_scheduled<'b>(self) -> BaseDynScheduledProducer<'b>
+    where
+        Self: 'b,
+    {
+        self
+    }
 }
