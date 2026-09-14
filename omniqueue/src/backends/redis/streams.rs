@@ -366,7 +366,8 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
 
         let mut pipe = redis::pipe();
 
-        // And reinsert the map of KV pairs into the MAIN queue with a new stream ID
+        // And reinsert the map of KV pairs into the MAIN queue with a new
+        // stream ID
         for stream_id in &claimed {
             let InternalPayloadOwned {
                 payload,
@@ -420,7 +421,8 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
             .await
             .map_err(QueueError::generic)?;
     } else {
-        // Wait for half a second before attempting to fetch again if nothing was found
+        // Wait for half a second before attempting to fetch again if nothing
+        // was found
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
 
