@@ -123,9 +123,10 @@ impl GcpPubSubProducer {
     }
 
     async fn publisher(&self) -> Result<Publisher> {
-        // N.b. defer the creation of a publisher/topic until needed. Helps recover when
-        // the topic does not yet exist, but will soon.
-        // Might be more expensive to recreate each time, but overall more reliable.
+        // N.b. defer the creation of a publisher/topic until needed. Helps
+        // recover when the topic does not yet exist, but will soon.
+        // Might be more expensive to recreate each time, but overall more
+        // reliable.
         let topic = self.client.topic(&self.topic_id);
 
         // Publishing to a non-existent topic will cause the publisher to wait
@@ -138,7 +139,8 @@ impl GcpPubSubProducer {
             ));
         }
 
-        // FIXME: may need to expose `PublisherConfig` to caller so they can tweak this
+        // FIXME: may need to expose `PublisherConfig` to caller so they can
+        // tweak this
         Ok(topic.new_publisher(None))
     }
 

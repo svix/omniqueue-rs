@@ -565,9 +565,9 @@ async fn test_sqs_config_takes_precedence_over_override_endpoint() {
     let payload = ExType { a: 10 };
     let queue_dsn = make_test_queue_config(None).await.queue_dsn;
 
-    // Nothing is listening on port 1. A failed send therefore means the explicit
-    // config is what reached the wire: `override_endpoint` on its own would have
-    // addressed the live queue.
+    // Nothing is listening on port 1. A failed send therefore means the
+    // explicit config is what reached the wire: `override_endpoint` on its
+    // own would have addressed the live queue.
     let p = SqsBackend::builder(queue_dsn.clone())
         .override_endpoint(true)
         .sqs_config(sdk_config("http://127.0.0.1:1"))
