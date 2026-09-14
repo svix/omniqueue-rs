@@ -364,8 +364,8 @@ async fn test_pending<R: RedisConnection>(
     let delivery1 = c.receive().await.unwrap();
     let delivery2 = c.receive().await.unwrap();
 
-    // All items claimed, but not yet ack'd. There shouldn't be anything available
-    // yet.
+    // All items claimed, but not yet ack'd. There shouldn't be anything
+    // available yet.
     assert!(c
         .receive_all(1, Duration::from_millis(1))
         .await

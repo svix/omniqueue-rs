@@ -506,16 +506,17 @@ impl<R: RedisConnection> RedisBackendBuilder<R> {
         })
     }
 
-    // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way to
-    // implement it in a way that makes good sense here.
-    // We need access to the pool, and various bits of config to spawn a task, but
-    // none of that is available where it matters right now.
-    // Doing my own thing for now - standalone function that takes what it needs.
+    // FIXME(onelson): there's a trait, `SchedulerBackend`, but no obvious way
+    // to implement it in a way that makes good sense here.
+    // We need access to the pool, and various bits of config to spawn a task,
+    // but none of that is available where it matters right now.
+    // Doing my own thing for now - standalone function that takes what it
+    // needs.
     async fn start_background_tasks(&self, redis: bb8::Pool<R>) -> Arc<JoinSet<Result<()>>> {
         let mut join_set = JoinSet::new();
 
-        // FIXME(onelson): does it even make sense to treat delay support as optional
-        // here?
+        // FIXME(onelson): does it even make sense to treat delay support as
+        // optional here?
         if self.config.delayed_queue_key.is_empty() {
             warn!("no delayed_queue_key specified - delayed task scheduler disabled");
         } else {
@@ -623,10 +624,11 @@ async fn background_task_delayed<R: RedisConnection>(
         .map_err(QueueError::generic)?;
 
     if resp.as_deref() == Some("OK") {
-        // First look for delayed keys whose time is up and add them to the main queue
+        // First look for delayed keys whose time is up and add them to the main
+        // queue
         //
-        // Subtract 1 from the timestamp to make it exclusive rather than inclusive,
-        // preventing premature delivery.
+        // Subtract 1 from the timestamp to make it exclusive rather than
+        // inclusive, preventing premature delivery.
         let timestamp = unix_timestamp(SystemTime::now() - Duration::from_secs(1))
             .map_err(QueueError::generic)?;
 
@@ -652,7 +654,8 @@ async fn background_task_delayed<R: RedisConnection>(
                 fallback::add_to_main_queue(new_keys, main_queue_name, &mut *conn).await?;
             }
 
-            // Then remove the tasks from the delayed queue so they aren't resent
+            // Then remove the tasks from the delayed queue so they aren't
+            // resent
             let _: () = conn
                 .zrem(delayed_queue_name, old_keys)
                 .await
@@ -664,7 +667,8 @@ async fn background_task_delayed<R: RedisConnection>(
             // Make sure to release the lock before sleeping
             let _: () = conn.del(delayed_lock).await.map_err(QueueError::generic)?;
 
-            // Wait for half a second before attempting to fetch again if nothing was found
+            // Wait for half a second before attempting to fetch again if
+            // nothing was found
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     } else {
@@ -771,7 +775,8 @@ impl<R: RedisConnection> RedisProducer<R> {
                 )
                 .await?;
             } else {
-                // This may fail if messages in the key are not in their original raw format.
+                // This may fail if messages in the key are not in their
+                // original raw format.
                 fallback::add_to_main_queue(new_payloads, &self.queue_key, &mut *conn).await?;
             }
 

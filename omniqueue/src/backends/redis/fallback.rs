@@ -38,7 +38,8 @@ fn reenqueue_script() -> &'static redis::Script {
         // RPUSH before LREM so a crash never loses the message (it ends up in
         // both queues rather than neither). If LREM returns 0, another process
         // already handled this item, so we undo our RPUSH. new_payload carries
-        // a unique KSUID so the undo-LREM only removes the payload we just pushed.
+        // a unique KSUID so the undo-LREM only removes the payload we just
+        // pushed.
         redis::Script::new(
             "local processing_queue = KEYS[1]
              local dest_queue       = KEYS[2]

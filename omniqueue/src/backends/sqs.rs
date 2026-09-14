@@ -466,8 +466,8 @@ impl crate::QueueConsumer for SqsConsumer {
     omni_delegate!(receive, receive_all);
 
     fn max_messages(&self) -> Option<NonZeroUsize> {
-        // Not very clearly documented, but this doc mentions "batch of 10 messages" a
-        // few times: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
+        // Not very clearly documented, but this doc mentions "batch of 10
+        // messages" a few times: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
         NonZeroUsize::new(10)
     }
 }
