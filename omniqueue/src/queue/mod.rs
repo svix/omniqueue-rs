@@ -14,7 +14,7 @@ pub(crate) use self::producer::ErasedQueueProducer;
 pub use self::{
     acker::Acker,
     consumer::{BaseDynConsumer, DynConsumer, QueueConsumer},
-    producer::{BaseDynProducer, DynProducer, QueueProducer},
+    producer::{BaseDynProducer, BatchResult, DynProducer, QueueProducer},
 };
 
 /// The output of queue backends

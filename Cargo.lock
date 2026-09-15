@@ -2206,6 +2206,7 @@ dependencies = [
  "sync_wrapper",
  "thiserror",
  "tokio",
+ "tonic",
  "tracing",
 ]
 
