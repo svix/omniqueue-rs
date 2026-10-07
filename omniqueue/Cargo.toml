@@ -25,6 +25,7 @@ svix-ksuid = { version = "0.10.0", default-features = false, optional = true }
 sync_wrapper = "1.0.1"
 thiserror = "2.0"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
+tonic = { version = "0.14.5", default-features = false, optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
@@ -39,7 +40,7 @@ tokio = { version = "1", features = ["macros"] }
 [features]
 default = ["in_memory", "gcp_pubsub", "rabbitmq", "redis", "redis_cluster", "sqs"]
 in_memory = []
-gcp_pubsub = ["dep:futures-util", "dep:gcloud-googleapis", "dep:gcloud-pubsub"]
+gcp_pubsub = ["dep:futures-util", "dep:gcloud-googleapis", "dep:gcloud-pubsub", "dep:tonic"]
 rabbitmq = ["dep:futures-util", "dep:lapin"]
 # Generate message IDs for queue items. Likely not needed outside of Svix.
 rabbitmq-with-message-ids = ["rabbitmq", "dep:svix-ksuid"]
