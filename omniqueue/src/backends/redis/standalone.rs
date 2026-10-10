@@ -12,8 +12,10 @@ pub struct RedisConnectionManager {
 
 impl RedisConnectionManager {
     pub fn new<T: IntoConnectionInfo>(info: T) -> Result<Self, RedisError> {
+        let info = info.into_connection_info()?;
+        let tcp_settings = super::with_tcp_keepalive(info.tcp_settings());
         Ok(Self {
-            client: Client::open(info.into_connection_info()?)?,
+            client: Client::open(info.set_tcp_settings(tcp_settings))?,
         })
     }
 }

@@ -15,8 +15,12 @@ impl RedisClusterConnectionManager {
     pub fn new<T: IntoConnectionInfo>(
         info: T,
     ) -> Result<RedisClusterConnectionManager, RedisError> {
+        let info = info.into_connection_info()?;
+        let tcp_settings = super::with_tcp_keepalive(info.tcp_settings());
         Ok(RedisClusterConnectionManager {
-            client: ClusterClientBuilder::new(vec![info]).build()?,
+            client: ClusterClientBuilder::new(vec![info])
+                .tcp_settings(tcp_settings)
+                .build()?,
         })
     }
 }
