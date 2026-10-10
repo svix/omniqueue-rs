@@ -40,9 +40,12 @@ use std::{
 };
 
 use bb8::ManageConnection;
+use redis::{
+    io::tcp::{socket2::TcpKeepalive, TcpSettings},
+    AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, TlsMode,
+};
 #[cfg(feature = "redis_sentinel")]
 use redis::{sentinel::SentinelNodeConnectionInfo, ProtocolVersion, RedisConnectionInfo};
-use redis::{AsyncCommands, ExistenceCheck, SetExpiry, SetOptions, TlsMode};
 use serde::Serialize;
 use svix_ksuid::{KsuidLike, KsuidMs};
 use thiserror::Error;
@@ -64,6 +67,16 @@ pub use cluster::RedisClusterConnectionManager;
 #[cfg(feature = "redis_sentinel")]
 pub use sentinel::RedisSentinelConnectionManager;
 pub use standalone::RedisConnectionManager;
+
+const TCP_KEEPALIVE_TIME: Duration = Duration::from_secs(30);
+
+fn with_tcp_keepalive(settings: &TcpSettings) -> TcpSettings {
+    let settings = settings.clone();
+    if settings.keepalive().is_some() {
+        return settings;
+    }
+    settings.set_keepalive(TcpKeepalive::new().with_time(TCP_KEEPALIVE_TIME))
+}
 
 pub trait RedisConnection:
     ManageConnection<
@@ -115,8 +128,9 @@ impl RedisConnection for RedisSentinelConnectionManager {
             conn_info = conn_info.set_password(password);
         }
 
-        let mut node_connection_info =
-            SentinelNodeConnectionInfo::default().set_redis_connection_info(conn_info);
+        let mut node_connection_info = SentinelNodeConnectionInfo::default()
+            .set_redis_connection_info(conn_info)
+            .set_tcp_settings(with_tcp_keepalive(&TcpSettings::default()));
         if let Some(tls_mode) = tls_mode {
             node_connection_info = node_connection_info.set_tls_mode(tls_mode);
         }

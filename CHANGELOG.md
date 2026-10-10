@@ -7,6 +7,11 @@
   - The in-memory backend is now constructed using `InMemoryBackend::new_pair()`
   - Every other backend now has its own builder type now
 
+## Additions
+
+- Enable TCP keepalive on Redis connections, so a consumer blocked on a half-open connection
+  gets an error instead of waiting forever
+
 # 0.3.0
 
 ## Breaking changes
