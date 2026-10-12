@@ -68,16 +68,6 @@ pub use cluster::RedisClusterConnectionManager;
 pub use sentinel::RedisSentinelConnectionManager;
 pub use standalone::RedisConnectionManager;
 
-const TCP_KEEPALIVE_TIME: Duration = Duration::from_secs(30);
-
-fn with_tcp_keepalive(settings: &TcpSettings) -> TcpSettings {
-    let settings = settings.clone();
-    if settings.keepalive().is_some() {
-        return settings;
-    }
-    settings.set_keepalive(TcpKeepalive::new().with_time(TCP_KEEPALIVE_TIME))
-}
-
 pub trait RedisConnection:
     ManageConnection<
     Connection: redis::aio::ConnectionLike + Send + Sync,
@@ -89,14 +79,14 @@ pub trait RedisConnection:
 
 impl RedisConnection for RedisConnectionManager {
     fn from_config(config: &RedisConfig) -> Result<Self> {
-        Self::new(config.dsn.as_str()).map_err(QueueError::generic)
+        Self::with_tcp_config(config.dsn.as_str(), &config.tcp_config).map_err(QueueError::generic)
     }
 }
 
 #[cfg(feature = "redis_cluster")]
 impl RedisConnection for RedisClusterConnectionManager {
     fn from_config(config: &RedisConfig) -> Result<Self> {
-        Self::new(config.dsn.as_str()).map_err(QueueError::generic)
+        Self::with_tcp_config(config.dsn.as_str(), &config.tcp_config).map_err(QueueError::generic)
     }
 }
 
@@ -130,7 +120,7 @@ impl RedisConnection for RedisSentinelConnectionManager {
 
         let mut node_connection_info = SentinelNodeConnectionInfo::default()
             .set_redis_connection_info(conn_info)
-            .set_tcp_settings(with_tcp_keepalive(&TcpSettings::default()));
+            .set_tcp_settings(config.tcp_config.tcp_settings());
         if let Some(tls_mode) = tls_mode {
             node_connection_info = node_connection_info.set_tls_mode(tls_mode);
         }
@@ -296,6 +286,48 @@ pub struct RedisConfig {
     pub ack_deadline_ms: i64,
     pub dlq_config: Option<DeadLetterQueueConfig>,
     pub sentinel_config: Option<SentinelConfig>,
+    pub tcp_config: TcpConfig,
+}
+
+/// TCP settings of the connections to redis.
+#[derive(Clone, Debug)]
+pub struct TcpConfig {
+    /// Idle time after which TCP keepalive probes are sent, or `None` to
+    /// leave keepalive disabled.
+    ///
+    /// Default: 30 seconds.
+    pub keepalive: Option<Duration>,
+    /// Whether to set `TCP_NODELAY`.
+    ///
+    /// Default: `false`.
+    pub nodelay: bool,
+    /// `SO_LINGER` time, or `None` to leave lingering disabled.
+    ///
+    /// Default: `None`.
+    pub linger: Option<Duration>,
+}
+
+impl Default for TcpConfig {
+    fn default() -> Self {
+        Self {
+            keepalive: Some(Duration::from_secs(30)),
+            nodelay: false,
+            linger: None,
+        }
+    }
+}
+
+impl TcpConfig {
+    fn tcp_settings(&self) -> TcpSettings {
+        let mut settings = TcpSettings::default().set_nodelay(self.nodelay);
+        if let Some(time) = self.keepalive {
+            settings = settings.set_keepalive(TcpKeepalive::new().with_time(time));
+        }
+        if let Some(linger) = self.linger {
+            settings = settings.set_linger_time(linger);
+        }
+        settings
+    }
 }
 
 #[derive(Clone)]

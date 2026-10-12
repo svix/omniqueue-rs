@@ -6,11 +6,13 @@
 - Delete the `QueueBuilder` type and `QueueBackend` trait
   - The in-memory backend is now constructed using `InMemoryBackend::new_pair()`
   - Every other backend now has its own builder type now
+- Add the `tcp_config` field to `RedisConfig`, holding the TCP keepalive, `TCP_NODELAY` and
+  `SO_LINGER` settings of the Redis connections
 
 ## Additions
 
-- Enable TCP keepalive on Redis connections, so a consumer blocked on a half-open connection
-  gets an error instead of waiting forever
+- Enable TCP keepalive on Redis connections by default, so a consumer blocked on a half-open
+  connection gets an error instead of waiting forever
 
 # 0.3.0
 

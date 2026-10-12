@@ -3,6 +3,8 @@ use redis::{
     RedisError, ServerErrorKind,
 };
 
+use super::TcpConfig;
+
 // Needed to override the new default response timeout
 // which breaks blocking requests
 #[derive(Clone, Debug)]
@@ -12,10 +14,18 @@ pub struct RedisConnectionManager {
 
 impl RedisConnectionManager {
     pub fn new<T: IntoConnectionInfo>(info: T) -> Result<Self, RedisError> {
-        let info = info.into_connection_info()?;
-        let tcp_settings = super::with_tcp_keepalive(info.tcp_settings());
+        Self::with_tcp_config(info, &TcpConfig::default())
+    }
+
+    pub(super) fn with_tcp_config<T: IntoConnectionInfo>(
+        info: T,
+        tcp_config: &TcpConfig,
+    ) -> Result<Self, RedisError> {
+        let info = info
+            .into_connection_info()?
+            .set_tcp_settings(tcp_config.tcp_settings());
         Ok(Self {
-            client: Client::open(info.set_tcp_settings(tcp_settings))?,
+            client: Client::open(info)?,
         })
     }
 }
