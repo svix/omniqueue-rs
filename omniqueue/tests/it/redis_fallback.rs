@@ -50,6 +50,7 @@ async fn make_test_queue() -> (RedisBackendBuilder, RedisKeyDrop) {
         ack_deadline_ms: 5_000,
         dlq_config: None,
         sentinel_config: None,
+        tcp_config: Default::default(),
     };
 
     (
@@ -330,6 +331,7 @@ async fn test_deadletter_config() {
             max_receives,
         }),
         sentinel_config: None,
+        tcp_config: Default::default(),
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -446,6 +448,7 @@ async fn test_deadletter_config_order() {
             max_receives,
         }),
         sentinel_config: None,
+        tcp_config: Default::default(),
     };
 
     let check_dlq = |asserted_len: usize| {
@@ -529,6 +532,7 @@ async fn test_backward_compatible() {
             max_receives,
         }),
         sentinel_config: None,
+        tcp_config: Default::default(),
     };
 
     let (builder, _drop) = (
@@ -589,6 +593,7 @@ async fn make_test_queue_with_deadline(
         ack_deadline_ms,
         dlq_config,
         sentinel_config: None,
+        tcp_config: Default::default(),
     };
     let processing_queue_key = format!("{queue_key}_processing");
     (
@@ -672,6 +677,7 @@ async fn test_concurrent_reenqueue_no_duplicates() {
             ack_deadline_ms,
             dlq_config: None,
             sentinel_config: None,
+            tcp_config: Default::default(),
         };
         RedisBackend::builder(config)
             .use_redis_streams(false)

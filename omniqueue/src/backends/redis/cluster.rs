@@ -4,6 +4,8 @@ use redis::{
     ErrorKind, FromRedisValue, IntoConnectionInfo, RedisError, ServerErrorKind,
 };
 
+use super::TcpConfig;
+
 /// ConnectionManager that implements `bb8::ManageConnection` and supports
 /// asynchronous clustered connections via `redis::cluster::ClusterClient`
 #[derive(Clone)]
@@ -15,8 +17,17 @@ impl RedisClusterConnectionManager {
     pub fn new<T: IntoConnectionInfo>(
         info: T,
     ) -> Result<RedisClusterConnectionManager, RedisError> {
+        Self::with_tcp_config(info, &TcpConfig::default())
+    }
+
+    pub(super) fn with_tcp_config<T: IntoConnectionInfo>(
+        info: T,
+        tcp_config: &TcpConfig,
+    ) -> Result<RedisClusterConnectionManager, RedisError> {
         Ok(RedisClusterConnectionManager {
-            client: ClusterClientBuilder::new(vec![info]).build()?,
+            client: ClusterClientBuilder::new(vec![info])
+                .tcp_settings(tcp_config.tcp_settings())
+                .build()?,
         })
     }
 }
