@@ -116,7 +116,8 @@ async fn make_test_queue_config() -> GcpPubSubConfig {
             &subscription_name,
             &topic_name,
             SubscriptionConfig {
-                // Messages published to the topic need to supply a unique ID to make use of this
+                // Messages published to the topic need to supply a unique ID to
+                // make use of this
                 enable_exactly_once_delivery: true,
                 dead_letter_policy: Some(DeadLetterPolicy {
                     dead_letter_topic: dead_letter_topic.fully_qualified_name().into(),
