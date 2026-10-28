@@ -105,9 +105,11 @@ async fn receive_with_timeout<R: RedisConnection>(
         .brpoplpush(
             &consumer.queue_key,
             &consumer.processing_queue_key,
-            // The documentation at https://redis.io/docs/latest/commands/brpoplpush/ does not
-            // state what unit the timeout is, but `BLPOP` and `BLMPOP` have similar timeout
-            // parameters that are documented as being seconds.
+            // The documentation at [1] does not state what unit the timeout is,
+            // but `BLPOP` and `BLMPOP` have similar timeout parameters that are
+            // documented as being seconds.
+            //
+            // [1]: https://redis.io/docs/latest/commands/brpoplpush/
             timeout.as_secs_f64(),
         )
         .await
