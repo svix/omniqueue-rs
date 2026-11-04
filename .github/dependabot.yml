@@ -15,8 +15,7 @@ updates:
     cooldown:
       default-days: 3
     schedule:
-      interval: "weekly"
-      day: "wednesday"
+      interval: "monthly"
     groups:
       workflows:
         applies-to: version-updates
