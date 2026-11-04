@@ -407,11 +407,12 @@ fn finalize_batch(
         failures.push((idx, QueueError::generic(msg)));
     }
 
-    // if the failed chunk wasn't the last, report all remaining messages as failed
-    // without attempting to send them.
+    // if the failed chunk wasn't the last, report all remaining messages as
+    // failed without attempting to send them.
+    let next_batch_start_idx = (chunk_idx + 1) * MAX_BATCH_SIZE;
     for (idx, _) in remaining_payloads.flatten().enumerate() {
         failures.push((
-            batch_start_idx + idx,
+            next_batch_start_idx + idx,
             QueueError::generic("not attempted because an earlier message failed"),
         ));
     }
