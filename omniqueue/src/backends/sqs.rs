@@ -396,7 +396,7 @@ fn finalize_batch(
         } else {
             // kinda ugly, but should never happen in practice anyways
             msg = format!("Unexpected failed message ID `{}` AND ", error_entry.id);
-            0
+            usize::MAX
         };
 
         write!(msg, "[{}]", error_entry.code).unwrap();
