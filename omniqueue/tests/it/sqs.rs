@@ -362,7 +362,8 @@ async fn test_send_raw_batch_chunks_larger_batches() {
     let payloads: Vec<Box<String>> = (0..COUNT)
         .map(|i| Box::new(format!("payload-{i}")))
         .collect();
-    p.send_raw_batch(payloads.clone()).await.unwrap();
+    let batch_res = p.send_raw_batch(payloads.clone()).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
@@ -390,7 +391,8 @@ async fn test_send_serde_json_batch_chunks_larger_batches() {
     let (p, c) = make_test_queue(None).await.build_pair().await;
 
     let payloads: Vec<ExType> = (0..COUNT).map(|i| ExType { a: i as u8 }).collect();
-    p.send_serde_json_batch(payloads).await.unwrap();
+    let batch_res = p.send_serde_json_batch(payloads).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
@@ -479,7 +481,8 @@ async fn test_send_bytes_batch_chunks_larger_batches() {
     let payloads: Vec<Vec<u8>> = (0..COUNT)
         .map(|i| format!("payload-{i}").into_bytes())
         .collect();
-    p.send_bytes_batch(payloads.clone()).await.unwrap();
+    let batch_res = p.send_bytes_batch(payloads.clone()).await.unwrap();
+    assert_eq!(batch_res.failures.len(), 0);
 
     let deliveries = receive_n(&c, COUNT).await;
     assert_eq!(deliveries.len(), COUNT);
@@ -625,4 +628,50 @@ async fn test_max_messages() {
     let (_p, c) = make_test_queue(None).await.build_pair().await;
 
     assert_eq!(c.max_messages(), NonZeroUsize::new(10));
+}
+
+#[tokio::test]
+async fn test_send_bytes_batch_with_errors() {
+    use omniqueue::QueueProducer as _;
+
+    // Since SQS batches are capped at 10 messages, this will be
+    // - a first batch of only valid payloads
+    // - a second batch containing invalid payloads at indices 2, 3, 4
+    //   (transparently mapped back to indices 12, 13, 14 for the API caller)
+    // - a third batch that should never be tried due to the first three errors
+    let payloads: Vec<_> = [
+        vec![b"valid-payload".as_slice(); 12],
+        vec![b"invalid\x00payload"; 3],
+        vec![b"valid-payload"; 12],
+        vec![b"invalid\x00payload"; 1],
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let (p, _) = make_test_queue(None).await.build_pair().await;
+
+    let batch_res = p.send_bytes_batch(payloads.clone()).await.unwrap();
+    let mut failures = batch_res.failures.into_iter();
+
+    // errors from first batch-send request
+    for expected_idx in [12, 13, 14] {
+        let (idx, error) = failures.next().unwrap();
+        assert_eq!(idx, expected_idx);
+        assert!(
+            error.to_string().contains("InvalidMessageContents"),
+            "{error}"
+        );
+    }
+
+    // last batch of 8 messages is not attempted, reflected as errors as well
+    // (so higher-level code can retry them)
+    for expected_idx in [20, 21, 22, 23, 24, 25, 26, 27] {
+        let (idx, error) = failures.next().unwrap();
+        assert_eq!(idx, expected_idx);
+        assert_eq!(
+            error.to_string(),
+            "not attempted because an earlier message failed"
+        );
+    }
 }
