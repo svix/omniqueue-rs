@@ -343,6 +343,9 @@ impl SqsProducer {
         let mut chunk_idx = 0;
         let mut payloads_iter = payloads.chunks(REQUEST_BATCH_SIZE);
         while let Some(payloads) = payloads_iter.next() {
+            // not equal to REQUEST_BATCH_SIZE if this is the last chunk,
+            // and `payloads.len() % REQUEST_BATCH != 0`.
+            let batch_size = payloads.len();
             let failure = match self.send_batch_request(payloads).await {
                 // all messages succeeded, continue
                 Ok(batch_result) if batch_result.failed.is_empty() => {
@@ -352,11 +355,11 @@ impl SqsProducer {
                 // some messages succeeded, some failed
                 Ok(batch_result) => BatchSendFailure::FailedMessages(batch_result.failed),
                 // first batch request failed, just bubble up the error
-                Err(e) if chunk_idx == 0 => return Err(e),
+                Err(error) if chunk_idx == 0 => return Err(error),
                 // later batch request failed, must report the success of the
                 // initial batch requests to allow the caller to retry only the
                 // remaining messages.
-                Err(e) => BatchSendFailure::Generic(e),
+                Err(error) => BatchSendFailure::Generic { error, batch_size },
             };
 
             let num_remaining_payloads = payloads_iter.flatten().count();
@@ -399,7 +402,10 @@ impl SqsProducer {
 
 enum BatchSendFailure {
     FailedMessages(Vec<BatchResultErrorEntry>),
-    Generic(QueueError),
+    Generic {
+        error: QueueError,
+        batch_size: usize,
+    },
 }
 
 fn finalize_batch(
@@ -430,9 +436,9 @@ fn finalize_batch(
                 failures.push((idx, QueueError::generic(msg)));
             }
         }
-        BatchSendFailure::Generic(e) => {
-            let e = format!("SendMessageBatch operation with this message failed: {e}");
-            for i in 0..REQUEST_BATCH_SIZE {
+        BatchSendFailure::Generic { error, batch_size } => {
+            let e = format!("SendMessageBatch operation with this message failed: {error}");
+            for i in 0..batch_size {
                 failures.push((batch_start_idx + i, QueueError::generic(e.as_str())));
             }
         }
