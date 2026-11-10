@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use serde::Serialize;
 
@@ -94,14 +94,14 @@ pub trait QueueProducer: Send + Sync + Sized {
 #[non_exhaustive]
 #[derive(Debug)]
 pub struct BatchResult {
-    /// List of `(position from batch-send call, error)`s.
-    pub failures: Vec<(usize, QueueError)>,
+    /// Map of `position from batch-send call` => `error`.
+    pub failures: BTreeMap<usize, QueueError>,
 }
 
 impl BatchResult {
     /// A `BatchResult` with no failures.
     pub const OK: Self = Self {
-        failures: Vec::new(),
+        failures: BTreeMap::new(),
     };
 }
 

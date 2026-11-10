@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fmt::{self, Write},
     future::Future,
     num::NonZeroUsize,
@@ -413,7 +414,7 @@ fn finalize_batch(
     failure: BatchSendFailure,
     num_remaining_payloads: usize,
 ) -> BatchResult {
-    let mut failures = Vec::new();
+    let mut failures = BTreeMap::new();
     let batch_start_idx = chunk_idx * REQUEST_BATCH_SIZE;
 
     match failure {
@@ -433,13 +434,13 @@ fn finalize_batch(
                     write!(msg, " {message}").unwrap();
                 }
 
-                failures.push((idx, QueueError::generic(msg)));
+                failures.insert(idx, QueueError::generic(msg));
             }
         }
         BatchSendFailure::Generic { error, batch_size } => {
             let e = format!("SendMessageBatch operation with this message failed: {error}");
             for i in 0..batch_size {
-                failures.push((batch_start_idx + i, QueueError::generic(e.as_str())));
+                failures.insert(batch_start_idx + i, QueueError::generic(e.as_str()));
             }
         }
     }
@@ -448,10 +449,10 @@ fn finalize_batch(
     // failed without attempting to send them.
     let next_batch_start_idx = (chunk_idx + 1) * REQUEST_BATCH_SIZE;
     for i in 0..num_remaining_payloads {
-        failures.push((
+        failures.insert(
             next_batch_start_idx + i,
             QueueError::generic("not attempted because an earlier message failed"),
-        ));
+        );
     }
 
     BatchResult { failures }
