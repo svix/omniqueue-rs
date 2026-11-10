@@ -6,8 +6,10 @@ use std::{
 };
 
 use aws_sdk_sqs::{
-    operation::delete_message::DeleteMessageError,
-    types::{error::ReceiptHandleIsInvalid, Message, SendMessageBatchRequestEntry},
+    operation::{delete_message::DeleteMessageError, send_message_batch::SendMessageBatchOutput},
+    types::{
+        error::ReceiptHandleIsInvalid, BatchResultErrorEntry, Message, SendMessageBatchRequestEntry,
+    },
     Client,
 };
 use futures_util::FutureExt as _;
@@ -15,13 +17,13 @@ use serde::Serialize;
 
 use crate::{
     queue::{Acker, Delivery},
-    QueueError, Result,
+    BatchResult, QueueError, Result,
 };
 
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/quotas-messages.html
 const MAX_PAYLOAD_SIZE: usize = 1_048_576;
 /// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessageBatch.html
-const MAX_BATCH_SIZE: usize = 10;
+const REQUEST_BATCH_SIZE: usize = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqsConfig {
@@ -321,7 +323,7 @@ impl SqsProducer {
         &self,
         payloads: impl IntoIterator<Item = I, IntoIter: Send> + Send,
         convert_payload: impl Fn(I) -> Result<String>,
-    ) -> Result<()> {
+    ) -> Result<BatchResult> {
         // Convert payloads up front and collect to Vec to run the payload size
         // check on everything before submitting the first batch.
         let payloads: Vec<_> = payloads
@@ -338,31 +340,54 @@ impl SqsProducer {
             }
         }
 
-        for payloads in payloads.chunks(MAX_BATCH_SIZE) {
-            let entries = payloads
-                .iter()
-                .enumerate()
-                .map(|(i, payload)| {
-                    SendMessageBatchRequestEntry::builder()
-                        .message_body(payload)
-                        .id(i.to_string())
-                        .build()
-                        .map_err(QueueError::generic)
-                })
-                .collect::<Result<_>>()?;
+        let mut chunk_idx = 0;
+        let mut payloads_iter = payloads.chunks(REQUEST_BATCH_SIZE);
+        while let Some(payloads) = payloads_iter.next() {
+            let failure = match self.send_batch_request(payloads).await {
+                // all messages succeeded, continue
+                Ok(batch_result) if batch_result.failed.is_empty() => {
+                    chunk_idx += 1;
+                    continue;
+                }
+                // some messages succeeded, some failed
+                Ok(batch_result) => BatchSendFailure::FailedMessages(batch_result.failed),
+                // first batch request failed, just bubble up the error
+                Err(e) if chunk_idx == 0 => return Err(e),
+                // later batch request failed, must report the success of the
+                // initial batch requests to allow the caller to retry only the
+                // remaining messages.
+                Err(e) => BatchSendFailure::Generic(e),
+            };
 
-            self.client
-                .send_message_batch()
-                .queue_url(&self.queue_dsn)
-                .set_entries(Some(entries))
-                .send()
-                // Segment the async state machine. send future is >5kb at the time of writing.
-                .boxed()
-                .await
-                .map_err(aws_to_queue_error)?;
+            let num_remaining_payloads = payloads_iter.flatten().count();
+            return Ok(finalize_batch(chunk_idx, failure, num_remaining_payloads));
         }
 
-        Ok(())
+        Ok(BatchResult::OK)
+    }
+
+    async fn send_batch_request(&self, payloads: &[String]) -> Result<SendMessageBatchOutput> {
+        let entries = payloads
+            .iter()
+            .enumerate()
+            .map(|(i, payload)| {
+                SendMessageBatchRequestEntry::builder()
+                    .message_body(payload)
+                    .id(i.to_string())
+                    .build()
+                    .map_err(QueueError::generic)
+            })
+            .collect::<Result<_>>()?;
+
+        self.client
+            .send_message_batch()
+            .queue_url(&self.queue_dsn)
+            .set_entries(Some(entries))
+            .send()
+            // Segment the async state machine. send future is >5kb at the time of writing.
+            .boxed()
+            .await
+            .map_err(aws_to_queue_error)
     }
 
     pub async fn redrive_dlq(&self) -> Result<()> {
@@ -370,6 +395,60 @@ impl SqsProducer {
             "redrive_dlq is not supported by SqsBackend",
         ))
     }
+}
+
+enum BatchSendFailure {
+    FailedMessages(Vec<BatchResultErrorEntry>),
+    Generic(QueueError),
+}
+
+fn finalize_batch(
+    chunk_idx: usize,
+    failure: BatchSendFailure,
+    num_remaining_payloads: usize,
+) -> BatchResult {
+    let mut failures = Vec::new();
+    let batch_start_idx = chunk_idx * REQUEST_BATCH_SIZE;
+
+    match failure {
+        BatchSendFailure::FailedMessages(failed) => {
+            for error_entry in failed {
+                let mut msg = String::new();
+                let idx = if let Ok(idx) = error_entry.id.parse::<usize>() {
+                    batch_start_idx + idx
+                } else {
+                    // kinda ugly, but should never happen in practice anyways
+                    msg = format!("Unexpected failed message ID `{}` AND ", error_entry.id);
+                    usize::MAX
+                };
+
+                write!(msg, "[{}]", error_entry.code).unwrap();
+                if let Some(message) = error_entry.message {
+                    write!(msg, " {message}").unwrap();
+                }
+
+                failures.push((idx, QueueError::generic(msg)));
+            }
+        }
+        BatchSendFailure::Generic(e) => {
+            let e = format!("SendMessageBatch operation with this message failed: {e}");
+            for i in 0..REQUEST_BATCH_SIZE {
+                failures.push((batch_start_idx + i, QueueError::generic(e.as_str())));
+            }
+        }
+    }
+
+    // if the failed chunk wasn't the last, report all remaining messages as
+    // failed without attempting to send them.
+    let next_batch_start_idx = (chunk_idx + 1) * REQUEST_BATCH_SIZE;
+    for i in 0..num_remaining_payloads {
+        failures.push((
+            next_batch_start_idx + i,
+            QueueError::generic("not attempted because an earlier message failed"),
+        ));
+    }
+
+    BatchResult { failures }
 }
 
 impl crate::QueueProducer for SqsProducer {
@@ -381,7 +460,7 @@ impl crate::QueueProducer for SqsProducer {
     fn send_raw_batch(
         &self,
         payloads: impl IntoIterator<Item: AsRef<Self::Payload> + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<BatchResult>> {
         self.send_batch_inner(payloads, |p| Ok(p.as_ref().into()))
     }
 
@@ -390,7 +469,7 @@ impl crate::QueueProducer for SqsProducer {
     fn send_serde_json_batch(
         &self,
         payloads: impl IntoIterator<Item: Serialize + Send, IntoIter: Send> + Send,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<BatchResult>> {
         self.send_batch_inner(payloads, |p| Ok(serde_json::to_string(&p)?))
     }
 }
