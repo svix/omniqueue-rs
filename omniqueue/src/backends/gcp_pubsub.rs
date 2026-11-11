@@ -171,10 +171,7 @@ impl GcpPubSubProducer {
         ))
     }
 
-    async fn send_batch_inner(
-        &self,
-        msgs: Vec<PubsubMessage>,
-    ) -> std::prelude::v1::Result<BatchResult, QueueError> {
+    async fn send_batch_inner(&self, msgs: Vec<PubsubMessage>) -> Result<BatchResult> {
         let publisher = self.publisher().await?;
         let awaiters = publisher.publish_bulk(msgs).await;
         let results = join_all(awaiters.into_iter().map(|a| a.get())).await;
