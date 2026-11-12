@@ -404,10 +404,12 @@ async fn reenqueue_timed_out_messages<R: RedisConnection>(
             );
         }
 
-        let _: () = pipe
-            .query_async(&mut *conn)
-            .await
-            .map_err(QueueError::generic)?;
+        if !pipe.is_empty() {
+            let _: () = pipe
+                .query_async(&mut *conn)
+                .await
+                .map_err(QueueError::generic)?;
+        }
 
         // Acknowledge all the stale ones so the pending queue is cleared
         let ids: Vec<_> = claimed.iter().map(|wrapped| &wrapped.id).collect();
